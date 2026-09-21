@@ -123,6 +123,100 @@ EPA, and success rate; anything beyond tolerance means the two sides were built
 from different play sets, and `epa_reconciliation_failures` surfaces it. Neither
 aggregation reads the score, spread, or result of the game being described.
 
+## Pace
+
+Pace describes how many snaps an offense ran and how quickly it ran them. One
+row per team per game:
+
+```python
+from gridiron.features import aggregate_pace, flag_pace_outliers, pace_distribution_report
+
+pace = aggregate_pace(pbp)
+distribution = pace_distribution_report(pace)
+flagged = flag_pace_outliers(pace)
+```
+
+`scripts/pace_report.py` runs the same three steps over the raw play-by-play and
+writes `pace_team_game.csv`, `pace_distribution.csv`, `pace_outliers.csv`, and
+`pace_coverage.csv` to `outputs/reports/`.
+
+### Definition
+
+The baseline statistic is a volume count:
+
+```text
+pace_plays_per_game = number of eligible offensive plays the team ran
+```
+
+Eligibility is not redefined here. `aggregate_pace` calls the same
+`filter_offensive_plays` the EPA aggregation uses, so pace counts pass and run
+scrimmage plays only -- never kickoffs, punts, field goals, extra points,
+penalties that wiped out a snap, kneel-downs, or spikes -- and a team-game's
+`pace_plays_per_game` is guaranteed to equal its `offensive_plays` from the EPA
+table. `offensive_play_count` is carried alongside as the explicit raw count.
+
+### Timing statistics
+
+These are optional and gated on the clock fields being usable, which
+`timing_fields_available` checks. When they are not, the columns are omitted
+rather than filled with a placeholder.
+
+| Column | Meaning |
+| --- | --- |
+| `seconds_per_play` | Mean game-clock seconds between consecutive snaps of the same drive |
+| `pace_intervals` | How many snap intervals that mean rests on |
+| `neutral_seconds_per_play` | The same mean, restricted to situation-neutral snaps |
+| `neutral_pace_intervals` | How many neutral intervals that mean rests on |
+| `no_huddle_rate` | Share of eligible plays run without a huddle |
+
+An interval is the game clock difference between consecutive snaps within one
+drive. The first snap of a drive has no predecessor. Intervals that are
+non-positive (source ordering artefacts) or longer than 60 seconds are dropped:
+the play clock is 40 seconds, so a longer gap means the clock stopped for a
+timeout, injury, review, two-minute warning, or quarter change, and would
+measure the stoppage instead of the tempo.
+
+A snap counts as situation-neutral when the score margin is within 8 points and
+more than 120 seconds remain in the half -- the states where the scoreboard is
+not itself dictating tempo.
+
+### Validity flags and missingness
+
+Nothing is dropped and nothing is fabricated. Rows that fail a quality check are
+flagged and kept so they can be imputed downstream:
+
+- `valid_pace` is false below 30 eligible plays.
+- `valid_neutral_pace` is false below 10 neutral intervals.
+- A team-game with no measurable interval keeps a null `seconds_per_play`.
+
+`flag_pace_outliers` returns the rows worth inspecting with a `flag_reasons`
+column. Its bounds (30-100 plays, 18-45 seconds per play) come from what
+football allows, not from the observed range, so they remain a real test.
+
+### What the 2016-2025 data shows
+
+Both teams have pace in **100% of the 2,639 completed games** in every season.
+
+| Statistic | Mean | Median | SD | Min | p01 | p99 | Max |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `pace_plays_per_game` | 62.44 | 62.00 | 8.47 | 30 | 43 | 84 | 95 |
+| `seconds_per_play` | 29.83 | 29.89 | 3.16 | 19.00 | 21.92 | 36.81 | 39.26 |
+| `neutral_seconds_per_play` | 32.58 | 32.73 | 3.49 | 12.00 | 22.19 | 40.15 | 49.00 |
+| `no_huddle_rate` | 0.096 | 0.061 | 0.114 | 0.00 | 0.00 | 0.60 | 0.81 |
+
+No team-game has an implausible play count or seconds-per-play value. The
+extremes were checked individually and are real football:
+
+- **30 plays** (LV at KC, 2025 week 7) -- a 31-0 loss with six punts, not lost data.
+- **95 plays** (SF vs ARI, 2018 week 5) -- SF trailed and threw 60 times.
+
+The only flagged category is thin neutral samples: **456 of 5,522 team-games
+(8.3%)** have fewer than 10 neutral intervals, and dispersion roughly doubles
+below that threshold (SD 6.36 versus 3.09). Four team-games have no neutral
+interval at all and keep a null. For this reason `neutral_seconds_per_play` is
+**not** recommended as a required model input; `pace_plays_per_game` is the
+statistic the baseline model should use.
+
 ## Layout
 
 ```text
@@ -133,4 +227,5 @@ data/interim/       Intermediate data (ignored by Git)
 data/processed/     Analysis-ready data (ignored by Git)
 models/             Serialized model artifacts (ignored by Git)
 reports/figures/    Generated figures (ignored by Git)
+outputs/reports/    Generated CSV reports (ignored by Git, except fixtures)
 ```

@@ -316,6 +316,107 @@ team-season for all but four, each a real event the data represents correctly:
 - **MIA and TB, 2017** carry none. Losing week 1 to Hurricane Irma left them
   playing weeks 2 through 17 consecutively, with no in-season bye.
 
+## Rolling team form
+
+Every feature here describes what a team had done **before** the game it is
+attached to:
+
+```python
+from gridiron.features import build_rolling_features
+
+features = build_rolling_features(history, offense, defense, pace)
+```
+
+`scripts/rolling_report.py` writes `rolling_features.csv` and
+`rolling_feature_coverage.csv` to `outputs/reports/`.
+
+### Order of operations
+
+This order is the whole guarantee, and it is not interchangeable:
+
+1. sort each team's games chronologically,
+2. **shift by one game**, excluding the current game,
+3. take the rolling or expanding mean of what remains,
+4. attach the result to the upcoming game.
+
+```python
+grouped.transform(lambda s: s.shift(1).rolling(5, min_periods=1).mean())  # correct
+grouped.transform(lambda s: s.rolling(5).mean())                          # leaks
+```
+
+Without the shift, a game's own outcome sits inside the window that is supposed
+to predict it.
+
+### Features, windows, and minimum periods
+
+All windows use **`min_periods=1`**: one prior game is enough to produce a
+value. `last_3` and `last_5` are fixed-length trailing windows; `_season` is an
+expanding window over every prior game in that season.
+
+| Feature | Source | Window |
+| --- | --- | --- |
+| `off_epa_last_3` / `_last_5` / `_season` | `offensive_epa_per_play` | 3 / 5 / season |
+| `def_epa_strength_last_3` / `_last_5` / `_season` | `defensive_epa_strength_per_play` | 3 / 5 / season |
+| `pace_last_3` / `_last_5` / `_season` | `pace_plays_per_game` | 3 / 5 / season |
+| `point_margin_last_3` / `_last_5` | `point_margin` | 3 / 5 |
+| `win_pct_last_5` | `win_value` (tie = 0.5) | 5 |
+| `ats_margin_last_5` | `point_margin - team_spread` | 5 |
+| `cover_rate_last_5` | `covered` (pushes null) | 5 |
+
+EPA features use the **per-play** rates rather than game totals, so they measure
+efficiency rather than volume; pace already carries the volume signal.
+
+### Season resets and the early season
+
+`season` is part of the grouping key, so **both** the fixed windows and the
+season-to-date values restart in week 1. Last season's closing form cannot reach
+this season, in either direction. No prior-season prior is implemented here; if
+one is wanted it should be a separate, separately documented feature.
+
+Week 1 has no prior game, so all fourteen features are null by construction.
+They are left that way for an imputer rather than being filled at this stage, so
+the absence stays visible. Three context columns describe how much history backs
+each row:
+
+| Column | Meaning |
+| --- | --- |
+| `week_number` | The week the game is in |
+| `is_early_season` | Week 4 or earlier |
+| `prior_games_this_season` | Completed prior games behind the value |
+
+### Leakage tests
+
+`tests/test_leakage.py` runs the contract directly: build features from all
+data, remove the target game's own values and every later game, rebuild, and
+confirm the target's features are unchanged. The suite also tampers with future
+results, tampers with the current game, and rebuilds a single season in
+isolation.
+
+One test matters more than the rest. `test_the_leak_detector_actually_detects_a_leak`
+runs the same comparison against a deliberately unshifted window and asserts it
+**fails**. Without it, every other leakage test could be passing vacuously.
+
+### A join fault this phase had to fix
+
+The play-by-play and the cleaned schedule disagree about franchise codes:
+nflverse play-by-play calls the Rams `LA` in all ten seasons while the cleaned
+schedule normalises to `LAR`. Joining without normalising silently dropped EPA
+and pace for **every Rams team-game** (181 rows). `assemble_team_game_inputs`
+normalises both sides before the join, and the join is validated `one_to_one`.
+
+### Coverage over 2016-2026
+
+5,822 rows, 14 features, and after the normalisation fix **no completed game is
+missing its EPA or pace inputs**. 864 rows have null rolling features, all
+explained:
+
+- **350** week 1 openers,
+- **2** the 2017 Miami and Tampa Bay openers, which fall in week 2,
+- **512** rows in the unplayed 2026 season, which has no current-season history
+  behind it yet.
+
+`cover_rate_last_5` has 6 more, from teams whose only prior games were pushes.
+
 ## Layout
 
 ```text

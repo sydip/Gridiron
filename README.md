@@ -217,6 +217,105 @@ interval at all and keep a null. For this reason `neutral_seconds_per_play` is
 **not** recommended as a required model input; `pace_plays_per_game` is the
 statistic the baseline model should use.
 
+## Team-game history and rest
+
+A schedule stores one row per game. Most team-level questions want one row per
+team per game, in time order:
+
+```python
+from gridiron.features import team_game_history, team_game_reconciliation
+
+history = team_game_history(schedule)
+report = team_game_reconciliation(history)
+```
+
+`scripts/team_game_report.py` writes `team_game_history.csv`,
+`team_game_rest_distribution.csv`, `team_game_rest_by_weekday.csv`, and
+`team_game_reconciliation_failures.csv` to `outputs/reports/`.
+
+### Shape
+
+Each game becomes a home row and an away row carrying `team`, `opponent`,
+`is_home`, `points_for`, `points_against`, `point_margin`, `team_spread`,
+`covered`, `gameday`, `season`, and `week`. Unplayed games are kept with null
+scores and marked by `is_completed`, so one history serves training and
+prediction alike.
+
+`team_spread` keeps the nflverse sign convention: **a positive number means this
+team is favoured**. The home row takes `spread_line` and the away row its
+negation, so a game's two spreads always sum to zero. Note this is the opposite
+of betting-sheet notation, where a favourite is quoted negative.
+
+`covered` is nullable: 1 when the team beat its own spread, 0 when it did not,
+and null for a push or a game with no score or line. A push is a real outcome,
+not a loss against the spread, so it is never recorded as 0.
+
+### Rest
+
+Rest is measured within a team and season from that team's own previous game.
+Rows are sorted by date before the shift, so a rest value can never be derived
+from a future date.
+
+| Column | Meaning |
+| --- | --- |
+| `previous_game_date` | That team's previous game in the same season |
+| `rest_days` | Days since it; 7 for a season opener |
+| `short_week` | Fewer than 7 days |
+| `extra_rest` | More than 7 days |
+| `bye_week_rest` | The team's week counter advanced by 2 or more |
+| `week_1_flag` | The team's first game of the season |
+| `rest_advantage_placeholder` | Reserved, always null (see below) |
+
+**Season openers.** Rest is not carried across a season boundary: the gap to the
+previous season's final game is an offseason, not rest, and varies by months
+between teams. Openers take 7 days and are marked by `week_1_flag`.
+
+**`week_1_flag` means "first game of the season", not `week == 1`.** These
+usually coincide, but not always: Miami and Tampa Bay opened 2017 in week 2
+after Hurricane Irma cancelled their week 1 game. Defining the flag by first
+appearance keeps those two openers from falling through with undefined rest.
+
+**Byes are detected from the week counter, not from elapsed days.** A bye is a
+scheduled week with no game, so `bye_week_rest` triggers on a week gap of 2 or
+more. Days alone cannot separate a true bye from the 10-to-12 day gap a team
+gets after a Thursday game, and in this data a one-week gap never exceeds 12
+days while 349 of 352 two-week gaps reach 13 or more.
+
+**`rest_advantage_placeholder` is deliberately empty.** Rest advantage compares
+a team against its opponent, which a later phase will fill. The column is
+reserved now so downstream schemas stay stable; an empty column is honest where
+an invented one would not be.
+
+### What the 2016-2026 data shows
+
+5,822 team-game rows from 2,911 games. All 2,911 reconcile: exactly two rows per
+game, margins cancelling, spreads cancelling. Every one of the 2,639 completed
+games produces exactly two rows.
+
+Mean rest is 7.43 days (median 7, range 4 to 17). Rest by the weekday played:
+
+| Weekday | Games | Mean rest | Short week | Extra rest |
+| --- | --- | --- | --- | --- |
+| Sunday | 4,542 | 7.64 | 7.9% | 16.6% |
+| Monday | 376 | 8.87 | 0.8% | 98.7% |
+| Thursday | 374 | 4.17 | 94.7% | 0.3% |
+| Saturday | 146 | 6.49 | 80.8% | 11.6% |
+| Friday | 16 | 5.19 | 100% | 0% |
+
+Thursday games are short weeks 94.7% of the time. The 20 that are not are the
+Thanksgiving pattern: 19 of them followed a game the *previous* Thursday, which
+is an ordinary 7-day turnaround. Bye-week games show extra rest 100% of the
+time, at a median of 14 days.
+
+There is exactly one opener per team per season (352), and exactly one bye per
+team-season for all but four, each a real event the data represents correctly:
+
+- **BUF and CIN, 2022** carry two gameless weeks. Their week 17 meeting was
+  cancelled after Damar Hamlin's cardiac arrest and never replayed, so both
+  played 16 games.
+- **MIA and TB, 2017** carry none. Losing week 1 to Hurricane Irma left them
+  playing weeks 2 through 17 consecutively, with no in-season bye.
+
 ## Layout
 
 ```text

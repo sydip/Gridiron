@@ -1,0 +1,52 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Raw/intermediate data and generated artifacts
+data/raw/*
+!data/raw/.gitignore
+data/interim/*
+!data/interim/.gitignore
+data/processed/*
+!data/processed/.gitignore
+models/*
+!models/.gitignore
+reports/figures/*
+!reports/figures/.gitignore
+
+# Common serialized and columnar artifacts outside the folders above
+*.joblib
+*.pkl
+*.pickle
+*.parquet
+*.feather
+
+# Generated run artifacts; the validation sample is a checked-in test fixture
+outputs/*
+!outputs/reports/
+outputs/reports/*
+!outputs/reports/spread_validation_sample.csv

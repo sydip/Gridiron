@@ -1,0 +1,14 @@
+nflreadpy
+pandas
+numpy
+scikit-learn
+seaborn
+matplotlib
+pyarrow
+joblib
+PyYAML
+pytest
+ruff
+
+# Install the local src-layout package for development.
+-e .

@@ -1472,6 +1472,78 @@ A test asserts that sentence is present. The confidence tiers describe how far
 a call sits from a coin flip and nothing more — "medium confidence" on a 0.553
 probability is a statement about the model, not about the game.
 
+## Visual reports
+
+```bash
+python scripts/build_reports.py --week 3
+python scripts/build_reports.py --historical-only
+```
+
+Two single-page reports, built **entirely from the saved processed tables**.
+Nothing is recomputed, so a chart cannot disagree with the run that produced
+it — and a missing table is named rather than silently skipped.
+
+### The two reports are deliberately hard to confuse
+
+They answer different questions, and mixing them up is the easiest way for a
+reader to come away with a wrong impression:
+
+| | Historical | Weekly |
+| --- | --- | --- |
+| Accent | blue banner | orange banner |
+| Subtitle | "Every panel is a settled result, not a prediction." | "These are predictions, not results." |
+| Content | 1,828 games the model never trained on | 16 unplayed games |
+
+### Historical report — nine panels
+
+Overall ATS record as a stat block, win rate by season, the baseline
+comparison, log loss and Brier each against what knowing nothing scores, units
+won and worst losing run by policy, the calibration curve, the coefficient
+chart, the correlation heatmap, and win rate by confidence bucket.
+
+Uses `sns.lineplot`, `sns.barplot`, `sns.scatterplot` and `sns.heatmap`; the
+weekly report adds `sns.histplot`.
+
+### Weekly report — and the "why" panel
+
+Per matchup: the line used, the pick, both cover probabilities, and the
+confidence. Then a **team comparison** heatmap (offence, defence, pace and rest
+edges, home minus away) and a confidence histogram.
+
+The bottom panel answers *why a team was selected*. For a standardised logistic
+regression the log-odds is exactly the intercept plus the sum of coefficient ×
+scaled value, so splitting that sum back out is **not an approximation — it is
+the arithmetic the model did**. The panel shows, for every game, how far each
+input pushed the pick and in which direction. A test reconstructs the
+probability from the contributions and asserts it matches `predict_proba`.
+
+### Football-friendly labels, one percentage rule
+
+`off_epa_diff_last_5` reads as "Offence edge, last 5 games"; `random` reads as
+"Coin flip". A test asserts every model feature has a mapped name and that no
+underscore survives into a chart.
+
+Every percentage goes through one `as_percent()` helper, because mixing "52%",
+"0.524" and "52.38%" makes numbers look inconsistent even when they agree.
+
+### Defects found by looking at the rendered images
+
+Six, none of which the code could have caught:
+
+- the "Even (50%)" legend landing on top of the annotation column,
+- a note drawn straight through the bars it described (twice),
+- policy labels overlapping each other and the axis,
+- a game-count axis showing "0.5 games",
+- and an accent clash — orange meant "upcoming" in the header but "negative
+  coefficient" in a panel, so the coefficient chart now uses the diverging
+  blue/red instead.
+
+Two test bugs surfaced the same way. `plt.close()` clears a figure's axes, so
+inspecting the object after the report returns finds nothing — the snapshot is
+now taken inside `savefig`. And titles set with `loc="left"` are invisible to
+`get_title()`, which reads the centre slot; the test was reporting every panel
+as untitled when all nine had titles.
+
 ## Layout
 
 ```text

@@ -11,7 +11,7 @@ forecasting problem.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -58,6 +58,11 @@ class TrainingMetadata:
     last_gameday: str | None = None
     c: float = 1.0
     class_weight: str | None = None
+    # Why these hyperparameters, recorded with the model so the choice can be
+    # read back without re-running the search.
+    selection_rationale: list[str] = field(default_factory=list)
+    selection_warnings: list[str] = field(default_factory=list)
+    tuned: bool = False
 
 
 def train_model(
@@ -162,8 +167,11 @@ def training_metadata(
     *,
     c: float = 1.0,
     class_weight: str | None = None,
+    selection_rationale: list[str] | None = None,
+    selection_warnings: list[str] | None = None,
+    tuned: bool = False,
 ) -> TrainingMetadata:
-    """Describe a fitted model's training set."""
+    """Describe a fitted model's training set and how it was configured."""
     gamedays = (
         pd.to_datetime(frame["gameday"], errors="coerce")
         if "gameday" in frame.columns
@@ -179,6 +187,9 @@ def training_metadata(
         last_gameday=str(gamedays.max().date()) if gamedays is not None else None,
         c=c,
         class_weight=class_weight,
+        selection_rationale=list(selection_rationale or []),
+        selection_warnings=list(selection_warnings or []),
+        tuned=tuned,
     )
 
 
@@ -230,11 +241,17 @@ def train_from_matchups(
     *,
     test_seasons: list[int] | None = None,
     test_fraction: float = 0.2,
+    use_configured_parameters: bool = True,
 ) -> tuple[Pipeline, pd.DataFrame, pd.DataFrame, TrainingMetadata]:
     """Split, fit, and describe in one call.
 
     Returns the fitted pipeline together with the training and test frames, so
     a caller can score the held-out rows without re-deriving the split.
+
+    By default the hyperparameters chosen by the tuning phase are read from
+    configuration, so training follows the recorded decision rather than a
+    hardcoded default. Passing ``use_configured_parameters=False`` fits the
+    untuned settings instead.
     """
     from gridiron.modeling.baselines import eligible_games
 
@@ -249,6 +266,30 @@ def train_from_matchups(
     except PipelineError as error:
         raise TrainingError(str(error)) from error
 
-    pipeline = train_model(features, labels)
-    metadata = training_metadata(pipeline, train_frame, labels)
+    if use_configured_parameters:
+        from gridiron.modeling.tuning import load_selected_parameters
+
+        selection = load_selected_parameters()
+    else:
+        from gridiron.modeling.tuning import SelectedParameters
+
+        selection = SelectedParameters(
+            c=1.0,
+            class_weight=None,
+            rationale=["Untuned defaults requested explicitly."],
+        )
+
+    pipeline = train_model(
+        features, labels, c=selection.c, class_weight=selection.class_weight
+    )
+    metadata = training_metadata(
+        pipeline,
+        train_frame,
+        labels,
+        c=selection.c,
+        class_weight=selection.class_weight,
+        selection_rationale=selection.rationale,
+        selection_warnings=selection.warnings,
+        tuned=bool(selection.validation_seasons),
+    )
     return pipeline, train_frame, test_frame, metadata

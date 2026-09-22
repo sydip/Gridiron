@@ -1,0 +1,31 @@
+{
+  "c": 0.01,
+  "class_weight": null,
+  "rationale": [
+    "Lowest mean log loss is 0.69629; kept the 2 set(s) within 0.001 of it, since a smaller gap than that is noise at this sample size",
+    "Lowest mean Brier among those is 0.25155; kept the 2 set(s) within 0.001",
+    "Broke the tie on stability: lowest accuracy standard deviation across seasons is 0.01934",
+    "Selected C=0.01, class_weight=None",
+    "ROI was not used to select; it is reported but optimising a small grid for return picks the luckiest cell"
+  ],
+  "selected_on": "2026-09-22T16:49:49+00:00",
+  "folds": 7,
+  "validation_seasons": [
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "mean_log_loss": 0.6964429807807925,
+  "mean_brier": 0.2516302452943126,
+  "mean_accuracy": 0.5025401753174543,
+  "accuracy_std": 0.01933917305151878,
+  "warnings": [
+    "6 feature(s) change coefficient sign between folds (away_short_week, div_game, home_short_week, off_epa_diff_last_5, rest_diff, win_pct_diff_last_5). Their direction is not stable across seasons, so they are fitting noise rather than measuring anything durable.",
+    "Mean log loss 0.69644 and Brier 0.25163 are no better than predicting 0.5 for every game (0.69315 and 0.25). The selected settings are the least bad of the grid, not good.",
+    "No parameter set in the grid produced informative probabilities."
+  ]
+}

@@ -870,6 +870,86 @@ was its **worst of seven seasons** (0.4552) and that the fuller picture is
 rather than representative. This is exactly why one split is not enough to judge
 a model either way.
 
+## Hyperparameter tuning
+
+```python
+python scripts/tune_model.py
+```
+
+Writes `outputs/reports/hyperparameter_results.csv` and saves the chosen
+settings, with their reasoning, to **`config/model_params.json`** — version
+controlled, because the choice is a project decision that later training runs
+read, not a generated artefact. `train_from_matchups` loads it by default.
+
+Grid: `C ∈ {0.01, 0.1, 0.5, 1.0, 2.0, 10.0}` × `class_weight ∈ {None,
+"balanced"}` — twelve sets, scored over **one identical list of folds** computed
+once and handed to every set, so a difference between rows is a difference in
+the parameters and never in the data they saw.
+
+The deployment season (2026) is never scored. A settled 2026 row reaching the
+search raises rather than being silently filtered.
+
+### Selection is ranked, and never ROI
+
+1. lowest mean log loss,
+2. lowest mean Brier score,
+3. most stable accuracy across seasons,
+4. competitive mean accuracy,
+5. smallest coefficients where everything above is equivalent.
+
+Steps 1 and 2 narrow by a **tolerance** (0.001) rather than picking an outright
+winner: at 1,800 games a log-loss gap of 0.0002 is noise, and treating it as a
+decision would be false precision. A test confirms that two sets inside the
+tolerance go to the next criterion instead of the nominal winner.
+
+ROI is reported but never decides. Optimising a twelve-cell grid for return on
+near-coinflip games selects the luckiest cell, not the best one — a test
+verifies that a set with by far the best ROI does not win on that basis.
+
+### What it selected: C = 0.01, class_weight = None
+
+| C | weight | accuracy | log loss | Brier | ROI | acc std | worst season |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.01 | balanced | 0.4945 | **0.69629** | **0.25155** | −0.0560 | 0.0235 | 0.4590 |
+| **0.01** | **None** | **0.5025** | 0.69644 | 0.25163 | −0.0406 | **0.01934** | **0.4813** |
+| 0.10 | balanced | 0.4875 | 0.69828 | 0.25251 | −0.0693 | 0.0245 | 0.4627 |
+| 0.10 | None | 0.5049 | 0.69847 | 0.25260 | −0.0361 | 0.0267 | 0.4627 |
+| … | | | | | | | |
+| 10.0 | None | 0.5011 | 0.69897 | 0.25284 | −0.0434 | 0.0266 | 0.4590 |
+
+Log loss narrowed the field to the two `C=0.01` sets; Brier kept both; **stability
+broke the tie** (accuracy std 0.0193 against 0.0235). The selected set also has
+the best worst-season accuracy in the entire grid, 0.4813.
+
+The heaviest regularisation winning is exactly what you expect when there is no
+signal: shrinking coefficients toward zero moves the model toward the
+uninformative predictor, which beats fitting noise.
+
+### Three warnings, all firing
+
+The search flags its own results, and all three flags are raised:
+
+1. **Six of eleven features change coefficient sign between folds** —
+   `away_short_week`, `div_game`, `home_short_week`, `off_epa_diff_last_5`,
+   `rest_diff`, `win_pct_diff_last_5`. Their direction is not stable across
+   seasons, so they are fitting noise rather than measuring anything durable.
+   That `off_epa_diff_last_5` is among them is notable: it is the feature the
+   `better_epa` baseline is built on.
+2. **The selected settings are no better than predicting 0.5** (log loss 0.69644
+   against ln 2 = 0.69315; Brier 0.25163 against 0.25). They are the least bad
+   of the grid, not good.
+3. **No parameter set in the grid produced informative probabilities** — 0 of 12.
+
+No coefficient exceeded the magnitude threshold (largest is 0.093 on the
+standardised scale, against a limit of 1.0), which is unsurprising given the
+regularisation that was selected.
+
+### What tuning did and did not achieve
+
+It picked the most defensible cell in the grid and recorded why. It did not
+produce a useful model, and the warnings say so in the configuration file
+itself, so anyone loading these parameters sees the caveats alongside them.
+
 ## Layout
 
 ```text

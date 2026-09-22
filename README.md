@@ -1031,6 +1031,92 @@ The machinery is built, tested, and temporally valid — `temporal_calibration_s
 case). It is waiting on a model whose scores rank games. Calibration is not the
 blocker here; discrimination is.
 
+## Betting policies
+
+```python
+python scripts/policy_backtest.py
+```
+
+Seven policies, all scored on walk-forward fold predictions. The thresholds are
+fixed in advance and every one is reported, including the losers — **no
+threshold was chosen by looking at these results**.
+
+### Odds assumption
+
+**American -110**: stake 110 to win 100. A winning unit returns 0.9091 in
+profit, a loser costs the full unit, and a push returns the stake. Break-even
+is **52.38% of resolved bets, not 50%**. ROI is profit per *resolved* bet;
+a push neither earns nor risks anything, so it is excluded from that
+denominator but counted in `bets`.
+
+### Pushes are bet on, not dropped
+
+The walk-forward evaluation excludes pushes because they have no label to
+train or score against. A betting backtest cannot: a push is a game the policy
+*did* stake money on and got refunded. `bettable_predictions` therefore trains
+each fold on the settled games of its earlier seasons and then predicts every
+completed, priced game of its validation season — pushes included. That takes
+the out-of-sample set from 1,828 to **1,871 games, 43 of them pushes**.
+
+### Results
+
+| Policy | Bets | W-L-P | Win rate | Units | ROI | Max DD | Streak | Prof. seasons |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| bet every prediction | 1,871 | 918-910-43 | 0.5022 | −75.5 | −0.0413 | 93.2 | 14 | 1/7 |
+| >= 2pp | 995 | 468-505-22 | 0.4810 | −79.5 | −0.0818 | 93.0 | 9 | 1/7 |
+| >= 3pp | 641 | 301-330-10 | 0.4770 | −56.4 | −0.0893 | 63.2 | 5 | 0/7 |
+| >= 4pp | 375 | 170-198-7 | 0.4620 | −43.5 | −0.1181 | 50.5 | 9 | 0/7 |
+| >= 5pp | 218 | 100-113-5 | 0.4695 | −22.1 | −0.1037 | 30.5 | 6 | 2/7 |
+| >= 7.5pp | 45 | 21-22-2 | 0.4884 | −2.9 | −0.0677 | 5.9 | 4 | 1/6 |
+| >= 10pp | 7 | 4-3-0 | 0.5714 | **+0.6** | **+0.0909** | 2.1 | 2 | 1/2 |
+
+**Confidence filtering did not help.** It made results worse through 4pp
+(−4.13% to −11.81%), then wandered. Every policy with enough bets to measure
+lost money.
+
+### The one profitable row is the reason for the caution section
+
+`>= 10pp` returns **+9.09% on seven bets**. Its 95% Wilson interval on the win
+rate runs **0.2505 to 0.8418** — 59 percentage points wide. It covers two
+seasons out of seven. The backtest flags it automatically:
+
+> only 7 bets: far below the 100 needed for a win rate to mean anything; treat
+> every figure on this row as noise
+
+Intervals are Wilson rather than the textbook normal approximation, which at
+n=7 produces bounds outside [0, 1] and far too narrow.
+
+### Win rate does not rise with claimed confidence
+
+| Claimed edge | Bets | Win rate | 95% interval |
+| --- | --- | --- | --- |
+| 0-2pp | 876 | **0.5263** | 0.4928 – 0.5596 |
+| 2-3pp | 354 | 0.4883 | 0.4358 – 0.5411 |
+| 3-4pp | 266 | 0.4981 | 0.4381 – 0.5581 |
+| 4-5pp | 157 | 0.4516 | 0.3754 – 0.5302 |
+| 5-7.5pp | 173 | 0.4647 | 0.3913 – 0.5396 |
+| 7.5pp+ | 45 | 0.4884 | 0.3462 – 0.6325 |
+
+The relationship is **inverted**: the games the model was least sure about won
+most often. That is consistent with the −0.54 calibration slope measured in the
+previous phase, and it is why filtering on confidence degrades rather than
+improves the results.
+
+### No claim of profitability
+
+Nothing here establishes a profitable strategy. Every policy with a measurable
+sample lost money, the only positive return rests on seven bets, and the
+model's confidence is inversely related to its accuracy. A backtest that found
+an edge in these numbers would be reporting noise.
+
+### A bug the tests caught
+
+`abs(0.45 - 0.5) * 100` is `4.999999999999999` in binary floating point, while
+`abs(0.55 - 0.5) * 100` is `5.000000000000004`. A bare `>=` admitted a
+prediction of 0.55 to the 5-point policy and turned away its mirror image at
+0.45 — the two sides of the threshold were being treated differently.
+Comparisons now carry a tolerance.
+
 ## Layout
 
 ```text

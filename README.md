@@ -498,6 +498,98 @@ intended. Their **rolling** differentials are null, because the play-by-play in
 this snapshot ends with 2025 and no 2026 game has been played into it. Once
 2026 play-by-play is downloaded, those fill in week by week with no code change.
 
+## Exploratory analysis
+
+```python
+python scripts/eda_report.py
+```
+
+Ten charts are written to `outputs/figures/`; the correlation matrices, the
+flagged pairs, and the decision record go to `outputs/reports/`. Both are
+generated artefacts and are gitignored — re-run the script to rebuild them.
+
+| # | Chart | Colour role |
+| --- | --- | --- |
+| 01 | Correlation heatmap, numeric model fields | Diverging |
+| 02 | Feature distributions | Single hue |
+| 03 | Offensive EPA by team and season | Diverging |
+| 04 | Defensive EPA strength by team and season | Diverging |
+| 05 | Pace distribution | Single hue |
+| 06 | Rest advantage vs cover rate | Single hue |
+| 07 | Spread bins vs home cover rate | Single hue |
+| 08 | Rolling EPA differential vs cover rate | Single hue |
+| 09 | Missing-value heatmap | Sequential |
+| 10 | ATS class balance by season | Categorical |
+
+Colour is assigned by the job it does. Anything with a sign (a correlation, an
+EPA either side of zero) gets a **diverging** scale with a neutral grey
+midpoint, so "no relationship" reads as nothing rather than as a colour.
+Missingness is a magnitude with no sign, so it gets a **sequential** one-hue
+ramp. Only chart 10 encodes identity, so only it uses categorical slots. The
+categorical set was checked with a colour-vision validator and clears the
+all-pairs separation floors.
+
+Every chart carries a title and labelled axes, and a test asserts it rather
+than leaving it to inspection.
+
+### Correlation policy
+
+Pairs at `|r| >= 0.80` are flagged. **No feature was removed**, and every
+flagged pair carries a written reason in
+`outputs/reports/eda_correlation_decisions.csv`.
+
+**No pair among the nine numeric model fields reaches the threshold.** The
+strongest is `point_margin_diff_last_5 ~ win_pct_diff_last_5` at **r = +0.795**,
+just under it — close enough to watch if a model shows unstable coefficients on
+those two, but not a breach.
+
+All nine flagged pairs are in the wider candidate set of every differential,
+and they fall into the shapes the policy anticipated:
+
+| Pair | r | Decision |
+| --- | --- | --- |
+| `off_epa_diff_last_5` ~ `off_epa_diff_season` | +0.923 | keep both |
+| `off_epa_diff_last_5` ~ `off_epa_diff_last_3` | +0.899 | keep both |
+| `pace_diff_last_5` ~ `pace_diff_season` | +0.897 | keep both |
+| `point_margin_diff_last_5` ~ `point_margin_diff_last_3` | +0.890 | keep both |
+| `def_epa_strength_diff_last_5` ~ `def_epa_strength_diff_season` | +0.889 | keep both |
+| `def_epa_strength_diff_last_5` ~ `def_epa_strength_diff_last_3` | +0.880 | keep both |
+| `pace_diff_last_5` ~ `pace_diff_last_3` | +0.879 | keep both |
+| `point_margin_diff_last_5` ~ `ats_margin_diff_last_5` | +0.868 | keep both |
+| `off_epa_diff_last_3` ~ `off_epa_diff_season` | +0.833 | keep both |
+
+Seven of the nine are two windows over the same metric. They are redundant by
+design, and **only one window per metric reaches the model row**, so no model
+ever sees the pair together. They stay in the wider table because a later phase
+may prefer the shorter window's recency.
+
+`point_margin` and `ats_margin` move together because one is the other shifted
+by the line; only `point_margin_diff_last_5` is a model field.
+
+One redundancy is recorded that **no correlation could have surfaced**:
+`defensive_epa_allowed_per_play` and `defensive_epa_strength_per_play` are exact
+negatives (`r = -1.00`), but the two never coexist in a frame, so no measured
+pair can flag them. The rolling layer consumes only the strength view, so the
+redundancy is designed out rather than filtered out. It is recorded explicitly
+so the decision is not invisible.
+
+### What the charts show
+
+The features have **weak univariate signal against the spread**, which is the
+expected result for a market that already prices team quality. The base home
+cover rate is 49.1%; cover rate by rolling EPA differential quintile stays
+within 47.8%–50.4%, and no spread bin departs far from break-even. Season ATS
+balance sits between 43.1% (2019) and 52.4% (2017).
+
+This is worth stating plainly before modelling: nothing here promises a
+profitable edge, and a model that reports one on these features should be
+treated as suspect until it survives the leakage checks and a held-out season.
+
+The correlation heatmap also shows `week_1_flag` with **blank, not zero**, cells
+against every rolling feature. The flag is constant wherever a rolling feature
+is present, so the pair has no overlapping observations — the flag is perfectly
+confounded with the missingness it marks.
+
 ## Layout
 
 ```text
@@ -509,4 +601,5 @@ data/processed/     Analysis-ready data (ignored by Git)
 models/             Serialized model artifacts (ignored by Git)
 reports/figures/    Generated figures (ignored by Git)
 outputs/reports/    Generated CSV reports (ignored by Git, except fixtures)
+outputs/figures/    Generated charts (ignored by Git)
 ```

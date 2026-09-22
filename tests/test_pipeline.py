@@ -24,6 +24,7 @@ from gridiron.modeling.pipeline import (
     target_vector,
 )
 from gridiron.modeling.train import (
+    METADATA_FILENAME,
     TrainingError,
     chronological_split,
     load_model,
@@ -456,7 +457,7 @@ def test_loading_detects_metadata_that_disagrees(tmp_path):
     metadata = training_metadata(pipeline, frame, labels)
     save_model(pipeline, metadata, tmp_path)
 
-    path = tmp_path / "logistic_regression.metadata.json"
+    path = tmp_path / METADATA_FILENAME
     import json
 
     payload = json.loads(path.read_text())

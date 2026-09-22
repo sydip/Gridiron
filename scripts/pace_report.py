@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.pbp_path.exists():
         LOGGER.error("Play-by-play parquet not found at %s", args.pbp_path)
-        LOGGER.error("Run 'python scripts/download_data.py' first.")
+        LOGGER.error("Run 'python -m gridiron.cli download' first.")
         return 1
 
     LOGGER.info("Reading %s", args.pbp_path)

@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.matchup_path.exists():
         LOGGER.error("Matchup table not found at %s", args.matchup_path)
-        LOGGER.error("Run 'python scripts/matchup_report.py' first.")
+        LOGGER.error("Run 'python -m gridiron.cli build-features' first.")
         return 1
 
     matchups = pd.read_csv(args.matchup_path, parse_dates=["gameday"])

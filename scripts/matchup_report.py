@@ -1,8 +1,12 @@
-"""Assemble the game-level model table and report its missing values.
+"""Report the game-level model table and its missing values.
 
-Runs the full feature pipeline -- schedule, team-game history, EPA, pace,
-rolling form -- then merges both sides into one row per game and writes the
-model table plus four missing-value breakdowns to ``outputs/reports``.
+The pipeline itself lives in :mod:`gridiron.features.build`, which this script
+and ``build_features.py`` both call, so the table this report describes is the
+same table the model trains on.
+
+For the workflow command, use ``build_features``. This script stays because
+the phase-10 report prints breakdowns by week and by team that the workflow
+summary leaves out.
 
 Usage::
 
@@ -17,50 +21,18 @@ import logging
 import sys
 from pathlib import Path
 
-import pandas as pd
-
-from gridiron.config import PROJECT_ROOT, configure_environment
-from gridiron.data.clean import clean_schedules
-from gridiron.features.epa import aggregate_defensive_epa, aggregate_offensive_epa
-from gridiron.features.matchup import (
-    FEATURE_COLUMNS,
-    TARGET_COLUMNS,
-    add_matchup_target,
-    assert_no_postgame_fields,
-    build_matchups,
-    missing_value_report,
-    model_rows,
+from gridiron.config import configure_environment
+from gridiron.features.build import (
+    PBP_PATH,
+    REPORT_DIR,
+    SCHEDULE_PATH,
+    build_feature_tables,
+    load_sources,
+    write_feature_tables,
 )
-from gridiron.features.pace import aggregate_pace
-from gridiron.features.rolling import build_rolling_features
-from gridiron.features.team_games import team_game_history
+from gridiron.features.matchup import FEATURE_COLUMNS, TARGET_COLUMNS
 
 LOGGER = logging.getLogger("matchup_report")
-
-PBP_PATH = PROJECT_ROOT / "data" / "raw" / "pbp_2016_2025.parquet"
-SCHEDULE_PATH = PROJECT_ROOT / "data" / "raw" / "schedules_2016_2026.parquet"
-REPORT_DIR = PROJECT_ROOT / "outputs" / "reports"
-
-PBP_COLUMNS = [
-    "season",
-    "week",
-    "game_id",
-    "posteam",
-    "defteam",
-    "play_type",
-    "epa",
-    "success",
-    "pass",
-    "rush",
-    "qb_kneel",
-    "qb_spike",
-    "game_seconds_remaining",
-    "half_seconds_remaining",
-    "no_huddle",
-    "fixed_drive",
-    "play_id",
-    "score_differential",
-]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -80,33 +52,12 @@ def main(argv: list[str] | None = None) -> int:
     for path in (args.pbp_path, args.schedule_path):
         if not path.exists():
             LOGGER.error("Required data not found at %s", path)
-            LOGGER.error("Run 'python scripts/download_data.py' first.")
+            LOGGER.error("Run 'python -m gridiron.cli download' first.")
             return 1
 
-    pbp = pd.read_parquet(args.pbp_path, columns=PBP_COLUMNS)
-    schedule = clean_schedules(pd.read_parquet(args.schedule_path))
-    if args.seasons:
-        pbp = pbp.loc[pbp["season"].isin(args.seasons)]
-        schedule = schedule.loc[schedule["season"].isin(args.seasons)]
-        LOGGER.info("Filtered to seasons %s", sorted(args.seasons))
-
-    features = build_rolling_features(
-        team_game_history(schedule),
-        aggregate_offensive_epa(pbp),
-        aggregate_defensive_epa(pbp),
-        aggregate_pace(pbp),
-    )
-    matchups = add_matchup_target(build_matchups(features, schedule))
-    rows = model_rows(matchups)
-    assert_no_postgame_fields(rows)
-
-    report = missing_value_report(matchups)
-
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    matchups.to_csv(args.output_dir / "matchups_wide.csv", index=False)
-    rows.to_csv(args.output_dir / "model_table.csv", index=False)
-    for name, frame in report.items():
-        frame.to_csv(args.output_dir / f"matchup_missing_by_{name}.csv", index=False)
+    pbp, schedule = load_sources(args.pbp_path, args.schedule_path, args.seasons)
+    matchups, rows, report = build_feature_tables(pbp, schedule)
+    write_feature_tables(matchups, rows, report, args.output_dir)
 
     labelled = rows["home_cover"].notna().sum()
     LOGGER.info(

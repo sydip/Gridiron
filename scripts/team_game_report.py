@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.schedule_path.exists():
         LOGGER.error("Schedule parquet not found at %s", args.schedule_path)
-        LOGGER.error("Run 'python scripts/download_data.py' first.")
+        LOGGER.error("Run 'python -m gridiron.cli download' first.")
         return 1
 
     schedule = clean_schedules(pd.read_parquet(args.schedule_path))

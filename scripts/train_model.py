@@ -28,9 +28,22 @@ from gridiron.modeling.metrics import (
 )
 from gridiron.modeling.pipeline import feature_matrix, model_coefficients
 from gridiron.modeling.train import (
+    METADATA_FILENAME,
     MODEL_DIR,
+    MODEL_FILENAME,
     save_model,
     train_from_matchups,
+)
+from gridiron.workflow import (
+    RunRecord,
+    WorkflowError,
+    add_common_arguments,
+    check_dependencies,
+    is_up_to_date,
+    print_artifacts,
+    print_up_to_date,
+    require_inputs,
+    warn_on_overwrite,
 )
 
 LOGGER = logging.getLogger("train_model")
@@ -39,6 +52,14 @@ MATCHUP_PATH = PROJECT_ROOT / "outputs" / "reports" / "matchups_wide.csv"
 REPORT_DIR = PROJECT_ROOT / "outputs" / "reports"
 
 DEFAULT_TEST_SEASONS = [2024, 2025]
+
+COMMAND = "train"
+
+REPORT_FILENAMES = [
+    "model_coefficients.csv",
+    "model_vs_baselines.csv",
+    "model_vs_baselines_by_season.csv",
+]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -52,20 +73,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Seasons held out entirely from training.",
     )
     parser.add_argument("--model-dir", type=Path, default=MODEL_DIR)
-    parser.add_argument("--output-dir", type=Path, default=REPORT_DIR)
+    add_common_arguments(parser, REPORT_DIR, "Directory for the training reports.")
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    args = parse_args(argv)
-    configure_environment()
-    seed_everything()
+def _expected_outputs(args: argparse.Namespace) -> list[Path]:
+    return [args.output_path / name for name in REPORT_FILENAMES] + [
+        args.model_dir / MODEL_FILENAME,
+        args.model_dir / METADATA_FILENAME,
+    ]
 
-    if not args.matchup_path.exists():
-        LOGGER.error("Matchup table not found at %s", args.matchup_path)
-        LOGGER.error("Run 'python scripts/matchup_report.py' first.")
-        return 1
+
+def _run(args: argparse.Namespace, record: RunRecord) -> int:
+    check_dependencies()
+    require_inputs(
+        {"matchup table": args.matchup_path},
+        remedy="Run 'python -m gridiron.cli build-features' first.",
+    )
+    record.add_input(args.matchup_path, "matchup table")
+
+    outputs = _expected_outputs(args)
+    if not args.force_refresh and is_up_to_date([args.matchup_path], outputs):
+        record.note("Skipped: the fitted model was newer than the matchup table.")
+        record.add_artifacts(outputs)
+        print_up_to_date(outputs, COMMAND)
+        return 0
+
+    warn_on_overwrite(outputs, LOGGER)
+    args.output_path.mkdir(parents=True, exist_ok=True)
 
     matchups = pd.read_csv(args.matchup_path, parse_dates=["gameday"])
     pipeline, train_frame, test_frame, metadata = train_from_matchups(
@@ -81,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"rows: {len(test_frame)}  seasons: {sorted(set(test_frame['season']))}")
 
     coefficients = model_coefficients(pipeline)
-    coefficients.to_csv(args.output_dir / "model_coefficients.csv", index=False)
+    coefficients.to_csv(args.output_path / "model_coefficients.csv", index=False)
     print("\n=== Coefficients (standardised scale, log-odds per SD) ===")
     print(coefficients.to_string(index=False))
     print(f"intercept: {coefficients.attrs['intercept']:+.5f}")
@@ -98,8 +133,8 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = comparison_table(held_out, predictions)
     seasons = season_table(held_out, predictions)
-    summary.to_csv(args.output_dir / "model_vs_baselines.csv", index=False)
-    seasons.to_csv(args.output_dir / "model_vs_baselines_by_season.csv", index=False)
+    summary.to_csv(args.output_path / "model_vs_baselines.csv", index=False)
+    seasons.to_csv(args.output_path / "model_vs_baselines_by_season.csv", index=False)
 
     print(f"\n=== Held-out comparison ({len(held_out)} games) ===")
     print(summary.to_string(index=False))
@@ -129,9 +164,28 @@ def main(argv: list[str] | None = None) -> int:
             "useful on the strength of its accuracy alone."
         )
 
-    print(f"\nSaved model to {args.model_dir}")
-    print(f"Wrote reports to {args.output_dir}")
+    record.add_artifacts(outputs)
+    print_artifacts(outputs)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    args = parse_args(argv)
+    configure_environment()
+    seed_everything()
+
+    record = RunRecord(COMMAND, argv, args.run_record_dir)
+    record.configure(args)
+
+    try:
+        code = _run(args, record)
+    except WorkflowError as error:
+        LOGGER.error("%s", error)
+        code = 1
+
+    print(f"\nRun record: {record.finish(code)}")
+    return code
 
 
 if __name__ == "__main__":

@@ -24,17 +24,19 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from conftest import (
+    HISTORY_SEASON,
+    PREDICTION_SEASON,
+    TARGET_WEEK,
+    synthetic_schedule,
+    write_raw_data,
+)
 from gridiron.config import PROJECT_ROOT
 from gridiron.modeling.deploy import DeploymentMetadata, save_deployment
 from gridiron.modeling.pipeline import build_pipeline, get_feature_columns
 from gridiron.prediction.weekly import PREDICTION_COLUMNS, STATUS_PREDICTED
 
 FEATURES = get_feature_columns()
-
-HISTORY_SEASON = 2025
-PREDICTION_SEASON = 2026
-# The week the command is asked to predict. Everything before it is played.
-TARGET_WEEK = 3
 
 
 def _load_command():
@@ -49,82 +51,6 @@ def _load_command():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
-
-
-def _pairings(week: int) -> list[tuple[str, str]]:
-    """Two games a week, with home advantage alternating by week."""
-    if week % 2:
-        return [("KC", "BUF"), ("MIA", "NYJ")]
-    return [("BUF", "KC"), ("NYJ", "MIA")]
-
-
-def _schedule() -> pd.DataFrame:
-    """Fifteen played weeks, then one unplayed week to predict."""
-    rng = np.random.default_rng(11)
-    rows = []
-    weeks = [(HISTORY_SEASON, week) for week in range(1, 15)]
-    weeks += [(PREDICTION_SEASON, week) for week in range(1, TARGET_WEEK + 1)]
-
-    for season, week in weeks:
-        played = not (season == PREDICTION_SEASON and week == TARGET_WEEK)
-        for home, away in _pairings(week):
-            home_score = float(rng.integers(13, 35)) if played else np.nan
-            away_score = float(rng.integers(13, 35)) if played else np.nan
-            kickoff = pd.Timestamp(f"{season}-09-04") + pd.Timedelta(weeks=week - 1)
-            rows.append(
-                {
-                    "game_id": f"{season}_{week:02d}_{away}_{home}",
-                    "season": season,
-                    "week": week,
-                    "gameday": kickoff.strftime("%Y-%m-%d"),
-                    "game_type": "REG",
-                    "home_team": home,
-                    "away_team": away,
-                    "home_score": home_score,
-                    "away_score": away_score,
-                    "spread_line": float(rng.choice([-6.5, -3.0, 1.5, 3.0, 7.0])),
-                }
-            )
-    return pd.DataFrame(rows)
-
-
-def _plays(schedule: pd.DataFrame) -> pd.DataFrame:
-    """Sixty scrimmage plays per completed game, thirty to a side."""
-    rng = np.random.default_rng(23)
-    played = schedule.loc[schedule["home_score"].notna()]
-    rows = []
-    play_id = 0
-
-    for game in played.itertuples():
-        for index in range(60):
-            offense = game.home_team if index % 2 == 0 else game.away_team
-            defense = game.away_team if index % 2 == 0 else game.home_team
-            is_pass = index % 3 != 0
-            play_id += 1
-            rows.append(
-                {
-                    "season": game.season,
-                    "week": game.week,
-                    "game_id": game.game_id,
-                    "posteam": offense,
-                    "defteam": defense,
-                    "play_type": "pass" if is_pass else "run",
-                    "epa": float(rng.normal(0.02, 0.9)),
-                    "success": int(rng.integers(0, 2)),
-                    "pass": int(is_pass),
-                    "rush": int(not is_pass),
-                    "qb_kneel": 0,
-                    "qb_spike": 0,
-                    # Descending, so seconds-per-play is well defined.
-                    "game_seconds_remaining": float(3600 - index * 55),
-                    "half_seconds_remaining": float(1800 - (index % 30) * 55),
-                    "no_huddle": 0,
-                    "fixed_drive": index // 4 + 1,
-                    "play_id": play_id,
-                    "score_differential": 0.0,
-                }
-            )
-    return pd.DataFrame(rows)
 
 
 def _deployment(directory):
@@ -159,34 +85,20 @@ def _deployment(directory):
 def world(tmp_path, monkeypatch):
     """A complete, self-contained installation: data, model, output directory."""
     raw = tmp_path / "raw"
-    raw.mkdir()
-
-    schedule = _schedule()
-    plays = _plays(schedule)
-
-    schedule_path = raw / "schedules.parquet"
-    schedule.to_parquet(schedule_path)
-
-    # Split the plays the way the pipeline stores them: finished seasons in one
-    # file, the season in progress in its own, so a weekly refresh stays small.
-    historical_path = raw / "pbp_historical.parquet"
-    plays.loc[plays["season"] != PREDICTION_SEASON].to_parquet(historical_path)
-    plays.loc[plays["season"] == PREDICTION_SEASON].to_parquet(
-        raw / f"pbp_{PREDICTION_SEASON}.parquet"
-    )
+    paths = write_raw_data(raw)
 
     from gridiron.prediction import weekly
 
     monkeypatch.setattr(weekly, "RAW_DIR", raw)
-    monkeypatch.setattr(weekly, "SCHEDULE_PATH", schedule_path)
-    monkeypatch.setattr(weekly, "HISTORICAL_PBP_PATH", historical_path)
+    monkeypatch.setattr(weekly, "SCHEDULE_PATH", paths["schedule"])
+    monkeypatch.setattr(weekly, "HISTORICAL_PBP_PATH", paths["historical_pbp"])
 
     return {
         "command": _load_command(),
         "models": _deployment(tmp_path / "models"),
         "output": tmp_path / "predictions",
         "raw": raw,
-        "schedule": schedule,
+        "schedule": synthetic_schedule(),
     }
 
 
@@ -305,7 +217,7 @@ def test_a_missing_model_is_reported_with_the_remedy(world, tmp_path, caplog):
     with caplog.at_level("ERROR"):
         assert _run(world) == 1
 
-    assert "deploy_model.py" in caplog.text
+    assert "gridiron.cli deploy" in caplog.text
 
 
 def test_an_unscheduled_week_is_refused_rather_than_invented(world, caplog):

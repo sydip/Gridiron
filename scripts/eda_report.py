@@ -119,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     for path in (args.pbp_path, args.schedule_path):
         if not path.exists():
             LOGGER.error("Required data not found at %s", path)
-            LOGGER.error("Run 'python scripts/download_data.py' first.")
+            LOGGER.error("Run 'python -m gridiron.cli download' first.")
             return 1
 
     pbp = pd.read_parquet(args.pbp_path, columns=PBP_COLUMNS)

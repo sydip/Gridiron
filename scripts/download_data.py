@@ -1,13 +1,41 @@
-"""Download and validate nflverse source datasets."""
+"""Download and validate the nflverse source datasets.
+
+Fetches play-by-play, team stats and schedules into ``data/raw`` as Parquet,
+then prints the validation summary that says whether what arrived is usable.
+
+Usage::
+
+    python scripts/download_data.py
+    python scripts/download_data.py --seasons 2023 2024 --prediction-season 2025
+    python scripts/download_data.py --force-refresh
+    python -m gridiron.cli download
+
+Files already on disk are reused. This is the one command that moves hundreds
+of megabytes over the network, so re-downloading is opt-in through
+``--force-refresh`` rather than the default.
+"""
 
 from __future__ import annotations
 
 import argparse
 import logging
+import sys
 
 import pandas as pd
 
-from gridiron.data.download import load_or_download_data
+from gridiron.data.download import RAW_DATA_DIR, cache_paths, load_or_download_data
+from gridiron.workflow import (
+    RunRecord,
+    WorkflowError,
+    add_common_arguments,
+    check_dependencies,
+    print_artifacts,
+    warn_on_overwrite,
+)
+
+LOGGER = logging.getLogger("download_data")
+
+COMMAND = "download"
 
 DEFAULT_HISTORICAL_SEASONS = list(range(2016, 2026))
 DEFAULT_PREDICTION_SEASON = 2026
@@ -54,7 +82,7 @@ def print_validation(data: dict[str, pd.DataFrame]) -> None:
         )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--seasons",
@@ -69,27 +97,64 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_PREDICTION_SEASON,
         help="Upcoming schedule season (default: 2026).",
     )
-    parser.add_argument(
-        "--force-refresh",
-        action="store_true",
-        help="Download all sources even when raw Parquet files exist.",
-    )
-    return parser.parse_args()
+    add_common_arguments(parser, RAW_DATA_DIR, "Directory for the raw Parquet files.")
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def _run(args: argparse.Namespace, record: RunRecord) -> int:
+    # nflreadpy is only needed here, so it is checked here rather than being
+    # made a hard requirement of every command.
+    check_dependencies(("nflreadpy",))
+
+    paths = cache_paths(args.seasons, args.prediction_season, args.output_path)
+    if args.force_refresh:
+        LOGGER.warning("--force-refresh: every source will be downloaded again.")
+        warn_on_overwrite(paths.values(), LOGGER)
+
+    try:
+        data = load_or_download_data(
+            seasons=args.seasons,
+            prediction_season=args.prediction_season,
+            force_refresh=args.force_refresh,
+            directory=args.output_path,
+        )
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        raise WorkflowError(
+            f"Download failed: {error}. Check the network connection and that "
+            "the requested seasons have been published by nflverse."
+        ) from error
+
+    record.add_artifacts(paths.values(), "raw data")
+
+    print(f"\n=== {COMMAND} ===")
+    for name, frame in data.items():
+        print(f"  {name:12s} {len(frame):>10,} rows")
+
+    print()
+    print_validation(data)
+    print_artifacts(paths.values(), "Raw files")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    data = load_or_download_data(
-        seasons=args.seasons,
-        prediction_season=args.prediction_season,
-        force_refresh=args.force_refresh,
-    )
-    print_validation(data)
+    args = parse_args(argv)
+
+    record = RunRecord(COMMAND, argv, args.run_record_dir)
+    record.configure(args)
+
+    try:
+        code = _run(args, record)
+    except WorkflowError as error:
+        LOGGER.error("%s", error)
+        code = 1
+
+    print(f"\nRun record: {record.finish(code)}")
+    return code
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

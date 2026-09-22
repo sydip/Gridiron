@@ -153,19 +153,24 @@ def save_raw_data(df: pd.DataFrame, path: Path) -> None:
     LOGGER.info("Saved %d rows to %s", len(df), path)
 
 
-def _cache_paths(seasons: list[int], prediction_season: int) -> dict[str, Path]:
+def cache_paths(
+    seasons: list[int],
+    prediction_season: int,
+    directory: Path | None = None,
+) -> dict[str, Path]:
+    """Where each raw dataset is cached, for a given season window.
+
+    Public because the download command needs to say what it is about to
+    write before it writes it. ``directory`` defaults to the module-level raw
+    data directory, resolved at call time so it stays overridable.
+    """
+    root = Path(directory) if directory is not None else RAW_DATA_DIR
     first_season, last_season = min(seasons), max(seasons)
     return {
-        "pbp": RAW_DATA_DIR / f"pbp_{first_season}_{last_season}.parquet",
-        "team_stats": (
-            RAW_DATA_DIR / f"team_stats_{first_season}_{last_season}.parquet"
-        ),
-        "schedules": (
-            RAW_DATA_DIR / f"schedules_{first_season}_{prediction_season}.parquet"
-        ),
-        "manifest": (
-            RAW_DATA_DIR / f"manifest_{first_season}_{prediction_season}.json"
-        ),
+        "pbp": root / f"pbp_{first_season}_{last_season}.parquet",
+        "team_stats": root / f"team_stats_{first_season}_{last_season}.parquet",
+        "schedules": root / f"schedules_{first_season}_{prediction_season}.parquet",
+        "manifest": root / f"manifest_{first_season}_{prediction_season}.json",
     }
 
 
@@ -212,13 +217,16 @@ def load_or_download_data(
     seasons: list[int],
     prediction_season: int,
     force_refresh: bool = False,
+    directory: Path | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Load cached Parquet datasets or download and persist missing datasets."""
     seasons = _validate_seasons(seasons)
     if type(prediction_season) is not int:
         raise TypeError("prediction_season must be an integer.")
     schedule_seasons = sorted(set([*seasons, prediction_season]))
-    paths = _cache_paths(seasons, prediction_season)
+    paths = cache_paths(seasons, prediction_season, directory)
+    for path in paths.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
 
     specifications = {
         "pbp": (PBP_REQUIRED_COLUMNS, load_historical_pbp, seasons),

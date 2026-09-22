@@ -41,6 +41,99 @@ seed_everything(DEFAULT_RANDOM_SEED)
 Pass `random_state=DEFAULT_RANDOM_SEED` to scikit-learn estimators and splitters
 that expose a `random_state` parameter.
 
+## The command-line workflow
+
+Everything the project does runs from the command line. There are no notebooks,
+and none is needed for any part of production execution.
+
+```bash
+python -m gridiron.cli all                                # rebuild everything
+python -m gridiron.cli predict --season 2026 --week 1     # then predict a week
+```
+
+`all` runs the five rebuild stages in order and stops at the first failure. Each
+stage is also a command in its own right, and each has an equivalent script:
+
+| Command | Script | What it does |
+|---|---|---|
+| `download` | `scripts/download_data.py` | Fetch play-by-play and schedules into `data/raw`. |
+| `build-features` | `scripts/build_features.py` | Build the matchup and model tables. |
+| `train` | `scripts/train_model.py` | Fit on the training seasons, score on the held-out ones. |
+| `backtest` | `scripts/backtest_model.py` | Walk-forward validation, then the betting policies. |
+| `deploy` | `scripts/deploy_model.py` | Fit the final model and persist its three artefacts. |
+| `predict` | `scripts/predict_week.py` | Predict one week of the upcoming season. |
+| `tune` | `scripts/tune_model.py` | Search C and class weighting, and record the choice. |
+| `report` | `scripts/build_reports.py` | Draw the historical and weekly figures. |
+
+The CLI does not reimplement any stage — it loads the script and calls its
+`main` — so the two entry points cannot drift apart. Arguments after the command
+name are passed through untouched, which means `python -m gridiron.cli predict
+--help` shows that command's own flags.
+
+`tune` and `report` are deliberately outside `all`. `tune` rewrites
+`config/model_params.json`, which is version-controlled configuration: deriving
+it again should be a deliberate act, not a side effect of a rebuild. `report`
+needs predictions for a specific week.
+
+### What every command guarantees
+
+**It exits nonzero when it fails**, and says what to do about it. Messages name
+the missing thing *and* the command that produces it:
+
+```text
+ERROR Missing required input(s): matchup table (outputs/reports/matchups_wide.csv).
+      Run 'python -m gridiron.cli build-features' first.
+```
+
+**It validates before it works.** Required packages are checked by import, and
+every input file is checked for existence — all of them at once, so one run
+reports the whole problem rather than one file per attempt. Optional
+dependencies are checked only by the commands that need them: `build-features`
+does not fail because seaborn is missing.
+
+**It warns before overwriting.** Existing artifacts are listed with their size
+and age before being replaced:
+
+```text
+WARNING Overwriting 3 existing artifact(s):
+WARNING   outputs/reports/model_coefficients.csv  (3,315 bytes, 39 minutes old)
+```
+
+This warns rather than refuses. A command that cannot be run twice is not
+idempotent, and idempotency is the more valuable property here.
+
+**It skips work it would only reproduce.** If every output is newer than every
+input, the command says so and exits 0 instead of spending a minute rewriting
+identical files. `--force-refresh` overrides that everywhere. For `download` it
+means re-fetch the sources; for `predict`, where features are rebuilt from
+source on every run by design, it is a synonym for `--refresh-data`.
+
+**It records what it ran with.** Every run writes a JSON record to
+`outputs/runs/<command>-<timestamp>.json`: the resolved arguments, the git
+commit and whether the tree was dirty, the Python and package versions, the
+random seed, and a SHA-256 of every artifact written. That last part is what
+makes the idempotency claim checkable — run a command twice and compare.
+
+**It accepts `--output-path`.** Every command writes where it is told;
+`--output-dir` is kept as an alias of the same flag.
+
+### Rebuilding from raw data
+
+```bash
+python -m gridiron.cli download          # ~10 seasons of play-by-play
+python -m gridiron.cli build-features    # -> outputs/reports/model_table.csv
+python -m gridiron.cli train             # -> models/training_model.joblib
+python -m gridiron.cli backtest          # -> walk-forward + policy tables
+python -m gridiron.cli deploy            # -> models/logistic_regression.joblib
+python -m gridiron.cli predict --season 2026 --week 1
+```
+
+`train` and `deploy` write *different* models on purpose. `train` fits on the
+training seasons only, so the held-out seasons stay held out; `deploy` fits on
+all ten. They are written under separate filenames so that running one cannot
+silently replace the other's pickle while the schema beside it still describes
+the model that was there before.
+
 ## Download NFL data
 
 Download the default 2016–2025 historical datasets and the 2016–2026 schedule:
@@ -1552,8 +1645,8 @@ pytest tests/test_leakage.py        # one area
 pytest -k "spread and convention"   # one idea
 ```
 
-616 tests across 24 files. They run in about a minute and need no network, no
-credentials, and no downloaded data.
+707 tests across 27 files. They run in about a minute and a half, and need no
+network, no credentials, and no downloaded data.
 
 ### What is covered
 
@@ -1565,7 +1658,8 @@ credentials, and no downloaded data.
 | Model pipeline — fitting, feature order, splits, walk-forward, tuning, calibration, policies | `test_pipeline.py`, `test_walk_forward.py`, `test_tuning.py`, `test_calibration.py`, `test_policies.py`, `test_baselines.py` |
 | Shipping — deployment artefacts, interpretation, reports | `test_deploy.py`, `test_interpretation.py`, `test_reports.py`, `test_eda.py` |
 | Weekly predictions — the table, the report, the refusals | `test_predictions.py` |
-| End to end — `scripts/predict_week.py` run as a command | `test_predict_week_command.py` |
+| The command-line workflow — validation, warnings, staleness, run records | `test_workflow.py`, `test_cli.py` |
+| End to end — the commands run for real on synthetic data | `test_predict_week_command.py`, `test_build_features_command.py` |
 | Reproducibility and conformance to the written specification | `test_config.py`, `test_spec_conformance.py` |
 
 ### Fixtures are small, fixed, and hand-checked
@@ -1580,20 +1674,30 @@ asserts that the error message *names* the broken contract. A validator that
 raises `ValueError: invalid input` is barely better than one that does not
 raise — whoever hits it still has to go and find out what happened.
 
-### The end-to-end smoke test
+### The end-to-end tests
 
-`test_predict_week_command.py` runs the weekly command the way a person does —
-argument parsing, data loading, feature rebuild, scoring, and both output files
-— against a synthetic universe of four teams, fifteen played weeks, and one
-unplayed week. It builds its own fitted model into a temporary directory and
-points the loader at its own parquet files, so it exercises the real code path
-without the repository's data or `models/`. It also asserts the default run
-never downloads anything: the download helpers are replaced with functions that
-raise, and the run still succeeds.
+`tests/conftest.py` holds a synthetic universe — four teams, a fixed schedule,
+seeded play-by-play — that the command tests run against instead of the
+repository's own `data/raw`.
+
+`test_predict_week_command.py` runs the weekly command the way a person does:
+argument parsing, data loading, feature rebuild, scoring, and both output
+files. It builds its own fitted model into a temporary directory and points the
+loader at its own parquet files, so it exercises the real code path without the
+repository's data or `models/`. It also asserts the default run never downloads
+anything — the download helpers are replaced with functions that raise, and the
+run still succeeds.
+
+`test_build_features_command.py` runs the feature build for real, then checks
+the workflow guarantees where they are cheapest to observe: a second run skips
+and says so, `--force-refresh` rebuilds, a touched input makes the tables stale
+again, and two runs record the same SHA-256. The backtest is minutes rather
+than seconds, so only its guard rails are exercised here; its arithmetic is
+covered by `test_walk_forward.py` and `test_policies.py`.
 
 ### Skips on a clean clone are expected
 
-On a fresh checkout with no downloaded data, the suite reports **589 passed, 27
+On a fresh checkout with no downloaded data, the suite reports **680 passed, 27
 skipped, 0 failed**. The 27 are the tests that check properties of the real
 2016–2026 data — the LA/LAR join, the observed missingness rates, the spread
 convention against 2,574 settled games — and they skip with a stated reason
@@ -1604,7 +1708,7 @@ SKIPPED [4] tests/test_epa.py: raw play-by-play parquet is not available
 SKIPPED [8] tests/test_matchup_merge.py: raw parquet data is not available
 ```
 
-Run `python scripts/download_data.py` and all 616 run.
+Run `python -m gridiron.cli download` and all 707 run.
 
 ## Layout
 

@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     week = args.week or _latest_week(args.prediction_dir)
     if week is None:
         LOGGER.warning(
-            "No saved predictions in %s; run scripts/predict_week.py first.",
+            "No saved predictions in %s; run 'python -m gridiron.cli predict' first.",
             args.prediction_dir,
         )
         return 0
@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         pipeline, _, _ = load_deployment()
     except DeploymentError as error:
         LOGGER.error("%s", error)
-        LOGGER.error("Run 'python scripts/deploy_model.py' first.")
+        LOGGER.error("Run 'python -m gridiron.cli deploy' first.")
         return 1
 
     matchups = build_prediction_features(args.season)

@@ -30,8 +30,13 @@ from gridiron.modeling.pipeline import (
 )
 
 MODEL_DIR = PROJECT_ROOT / "models"
-MODEL_FILENAME = "logistic_regression.joblib"
-METADATA_FILENAME = "logistic_regression.metadata.json"
+# Deliberately distinct from the deployment artefacts in deploy.py. This is a
+# different model -- fitted on the training seasons only, so that the held-out
+# seasons stay held out -- and writing both under one filename let a later
+# train run silently replace the deployed model while the schema beside it
+# still described the old one.
+MODEL_FILENAME = "training_model.joblib"
+METADATA_FILENAME = "training_model.metadata.json"
 
 MIN_TRAINING_ROWS = 50
 

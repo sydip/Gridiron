@@ -1204,6 +1204,186 @@ anything, which is precisely what its sample-size warning said.
 The model also backs underdogs better than favourites (51.94% against 48.41%),
 and both lose money.
 
+## Interpreting the model
+
+```python
+python scripts/interpret_model.py
+```
+
+Fits the deployment model on the full 2016-2025 window and writes the
+coefficient table, odds-ratio view, collinearity diagnostics, fold-to-fold
+stability, a limitations record, and two charts.
+
+### Coefficients and odds ratios
+
+Features are standardised, so a coefficient is the change in log-odds of a home
+cover per **one standard deviation** of that feature, and `exp(coefficient)` is
+the odds ratio. `odds_change_pct` restates that as a percentage, which is the
+form people read correctly — an odds ratio of 0.96 is a 4% *reduction*, not 96%.
+
+| Feature | Coefficient | Odds change | VIF |
+| --- | --- | --- | --- |
+| pace_diff_last_5 | −0.0438 | −4.3% | 1.05 |
+| def_epa_strength_diff_last_5 | −0.0366 | −3.6% | 4.81 |
+| week_1_flag | −0.0247 | −2.4% | 1.02 |
+| point_margin_diff_last_5 | −0.0231 | −2.3% | **10.14** |
+| spread_line | +0.0142 | +1.4% | 2.05 |
+| div_game | −0.0113 | −1.1% | 1.01 |
+| away_short_week | +0.0077 | +0.8% | 1.38 |
+| win_pct_diff_last_5 | −0.0077 | −0.8% | 2.77 |
+| rest_diff | −0.0048 | −0.5% | 1.10 |
+| home_short_week | −0.0023 | −0.2% | 1.39 |
+| off_epa_diff_last_5 | +0.0017 | +0.2% | 5.67 |
+
+Intercept −0.0323. Every coefficient is checked against
+`classifier.coef_[0]` by position in a test, so the mapping cannot silently
+drift.
+
+### Direction, stated as association
+
+Each feature carries a written direction composed from the coefficient's sign
+at read time, so it reads naturally whichever way the fit lands:
+
+> A stronger home defence relative to the away defence over the last five games
+> (the measure is sign-adjusted, so higher is better) is associated with a
+> **lower** modelled probability of a home cover.
+
+A test asserts every interpretation contains "associated with" and **none**
+contains causal phrasing ("causes", "leads to", "results in"). The data is
+observational; nothing was manipulated.
+
+### VIF found what pairwise correlation missed
+
+Phase 11 concluded that no pair among the eleven features reaches |r| = 0.80 —
+the strongest is 0.795. That was true and still incomplete. **Variance
+inflation factors put `point_margin_diff_last_5` at 10.14**: over 90% of its
+variation is already carried by the *combination* of the other features, even
+though it never pairs strongly with any single one. `off_epa_diff_last_5` is at
+5.67.
+
+This matters for reading the table. When predictors overlap, the fit can move
+magnitude between them almost freely, so `point_margin_diff_last_5`'s
+coefficient is not a measure of its importance. Both flagged features are
+marked in the table and drawn in a second colour on the chart.
+
+### Coefficients that will not hold still
+
+The same features fitted across the seven walk-forward folds: **6 of 11 change
+sign between folds** — `away_short_week`, `off_epa_diff_last_5`, `div_game`,
+`rest_diff`, `home_short_week`, `win_pct_diff_last_5`. The stability chart draws
+each coefficient's fold range; a bar crossing zero is a feature whose direction
+the model could not agree on from one season to the next.
+
+Only `spread_line`, `pace_diff_last_5`, `def_epa_strength_diff_last_5`,
+`point_margin_diff_last_5` and `week_1_flag` keep their sign, and all five are
+tiny.
+
+### Limitations, printed with the table
+
+`model_limitations()` derives each caveat from something measured, so the list
+shrinks by itself if the model improves. For this model it returns seven:
+
+1. **Associations, not causes** — observational data, always present.
+2. **The coefficients are tiny** — largest is 0.0438, a 4.3% odds change per
+   standard deviation.
+3. **Some features are largely redundant** — `point_margin_diff_last_5` at
+   VIF 10.
+4. **Several coefficients change sign between folds** — 6 of 11.
+5. **The model does not rank games** — out-of-sample ROC-AUC 0.4817.
+6. **The probabilities carry no information** — log loss 0.69637 against
+   0.69315 for a flat 0.5.
+7. **A linear model in the log-odds** — interactions cannot appear unless built
+   as features.
+
+Points 5 and 6 are the ones that frame the rest. Interpreting the coefficients
+of a model with no discrimination explains **how it makes its mistakes**, not
+how football works. The coefficient table is a description of this fit, not a
+set of findings about the sport.
+
+## The deployment model
+
+```python
+python scripts/deploy_model.py
+```
+
+Fits the final model on all of 2016-2025, writes three artefacts, reloads them,
+and proves the reloaded model produces probabilities.
+
+### It refuses to run before the hyperparameters are frozen
+
+`load_selected_parameters` falls back to untuned defaults when no tuning run is
+recorded — correct for exploratory work, wrong here. Fitting the final model on
+every season with settings chosen afterwards would throw away the only evidence
+that those settings are reasonable, so `assert_hyperparameters_frozen` raises
+instead. A test covers it.
+
+### Training set, with every exclusion counted
+
+| | Games |
+| --- | --- |
+| 2016-2025 regular season | 2,639 |
+| excluded, not completed | 0 |
+| excluded, no spread line | 0 |
+| **excluded, pushes** | **65** |
+| excluded, no label | 0 |
+| **training games** | **2,574** |
+| of which complete cases | 2,416 |
+| of which carry an imputed feature | 158 |
+
+The exclusions are counted in order as the filters are applied, and a test
+asserts they sum back to the starting total — so a game cannot vanish
+unexplained.
+
+**Missing features are not an exclusion.** The pipeline imputes them, which is
+what keeps the 158 season-opener games in training rather than discarding 6% of
+the data. They are counted, not dropped.
+
+### Three artefacts that must agree
+
+| File | Purpose |
+| --- | --- |
+| `models/logistic_regression.joblib` | the fitted pipeline |
+| `models/feature_schema.json` | the 11 features, in the model's order, with dtypes |
+| `models/model_metadata.json` | what it was trained on and what was left out |
+
+The schema's order is read from the **fitted pipeline**, not from the feature
+list, so it records what the model actually expects. `save_deployment` refuses
+to write if the schema or metadata disagrees with the pipeline, and
+`load_deployment` re-checks on the way back in — a schema that has drifted from
+the pickle is worse than a missing one, because it would let a caller build a
+matrix the model silently misreads.
+
+Metadata carries all eleven specified keys, plus `exclusions`,
+`hyperparameter_selection` (including the tuning warnings) and `random_seed`.
+
+### Smoke test
+
+`smoke_test()` reloads all three artefacts and builds its probe **from the
+schema alone**, the way a caller with no access to the training data would. The
+probe includes an all-missing row so the imputation step is exercised too. It
+fails loudly if a probability falls outside (0, 1) or the row count is wrong.
+
+### What is actually being shipped
+
+The metadata records the validation summary, because the model's provenance
+should travel with it:
+
+| | |
+| --- | --- |
+| Mean season accuracy | 0.5064 |
+| Worst season | 0.4739 |
+| ROC-AUC | 0.4817 |
+| Log loss | 0.69637 (vs 0.69315 for a flat 0.5) |
+| ROI | −0.0340 |
+
+And the three tuning warnings ride along in
+`hyperparameter_selection.warnings`, so anyone loading this model sees that six
+of eleven coefficients flip sign across folds and that no parameter set produced
+informative probabilities.
+
+The script says it plainly at the end: shipping this model is not a
+recommendation to bet with it.
+
 ## Layout
 
 ```text

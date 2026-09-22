@@ -763,6 +763,113 @@ test score is how a test set stops being one. The result stands as measured.
 model has not been shown to add value, so the comparison cannot be omitted by
 whoever reads the output next.
 
+## Walk-forward validation
+
+One held-out season is 250-odd near-coinflip games — far too few to tell a real
+edge from a lucky year. Seven expanding-window folds give seven readings, and a
+spread:
+
+```python
+python scripts/walk_forward_report.py
+python scripts/walk_forward_report.py --first 2020 --final 2025
+```
+
+### How the folds work
+
+`season_walk_forward_splits` yields one fold per validation season. Each trains
+on **every season strictly before** it and validates on that season alone, so
+the training window expands one season at a time — which is how the model would
+actually have been used: at the start of 2022 you have 2016–2021 and nothing
+else.
+
+| Validation | Trained on | Train games |
+| --- | --- | --- |
+| 2019 | 2016-2018 | 746 |
+| 2020 | 2016-2019 | 992 |
+| 2021 | 2016-2020 | 1,248 |
+| 2022 | 2016-2021 | 1,516 |
+| 2023 | 2016-2022 | 1,777 |
+| 2024 | 2016-2023 | 2,035 |
+| 2025 | 2016-2024 | 2,303 |
+
+A **fresh pipeline is fitted inside every fold**. Reusing one would carry an
+earlier fold's imputation medians and scaling statistics into a later one — the
+same leak the pipeline exists to prevent, moved up a level.
+
+`_check_chronology` asserts at runtime that no training game was played at or
+after the fold's first validation game. Season boundaries make this true (a
+season ends in early January, the next starts in September, verified across all
+nine boundaries in the data) but it is the property the whole backtest rests on,
+so it is checked rather than assumed.
+
+### Out-of-sample results, 1,828 games
+
+Every game from 2019 onward, predicted exactly once by a model that saw nothing
+from its season or later:
+
+| Season | Record | Accuracy | ROI |
+| --- | --- | --- | --- |
+| 2019 | 135-111 | 0.5488 | +0.0477 |
+| 2020 | 130-126 | 0.5078 | −0.0305 |
+| 2021 | 133-135 | 0.4963 | −0.0526 |
+| 2022 | 130-131 | 0.4981 | −0.0491 |
+| 2023 | 127-131 | 0.4922 | −0.0603 |
+| 2024 | 122-146 | 0.4552 | −0.1309 |
+| 2025 | 138-133 | 0.5092 | −0.0278 |
+
+| Aggregate | |
+| --- | --- |
+| Mean season accuracy | 0.5011 |
+| Median season accuracy | 0.4981 |
+| Worst season | 0.4552 (2024) |
+| Best season | 0.5488 (2019) |
+| Accuracy std dev | 0.0277 |
+| Pooled accuracy | 0.5006 |
+| Log loss | 0.6989 |
+| Brier score | 0.2528 |
+| ROI | −0.0444 |
+
+### The probabilities are worse than useless
+
+A model that knows nothing and predicts 0.5 for every game scores a log loss of
+**ln(2) = 0.6931** and a Brier score of **0.2500**. This model scores **0.6989**
+and **0.2528** — *above* both.
+
+That is a stronger statement than the accuracy figures. The model's
+probabilities are not merely uninformative; replacing every one of them with a
+flat 0.5 would make the model better. `probability_quality()` reports this
+comparison directly, and the script prints it in plain words.
+
+### Against the baselines, same 1,828 games
+
+| Strategy | Accuracy | ROI |
+| --- | --- | --- |
+| random | 0.5241 | **+0.0005** |
+| underdog | 0.5181 | −0.0110 |
+| away_every_game | 0.5126 | −0.0214 |
+| better_epa | 0.5005 | −0.0444 |
+| **MODEL walk_forward** | **0.5005** | **−0.0444** |
+| home_every_game | 0.4874 | −0.0695 |
+| favorite | 0.4819 | −0.0799 |
+
+The model ties `better_epa` and is beaten by four strategies including random.
+
+**Do not read `random` finishing first as meaning random is good.** At 1,828
+games the standard error on an accuracy near 0.5 is about 1.2 points, so random
+landing 2.4 points above chance is roughly a two-sigma outcome — and seven
+strategies were drawn, so one of them landing there is unremarkable. What the
+table really shows is that the spread between all these strategies is within
+noise. That is the point: none of them, the model included, has demonstrated an
+edge.
+
+### What this changes about Phase 13
+
+The single 2024–2025 holdout put the model at 0.4657. Walk-forward shows 2024
+was its **worst of seven seasons** (0.4552) and that the fuller picture is
+0.5011 mean — still no edge, but the single-holdout figure was pessimistic
+rather than representative. This is exactly why one split is not enough to judge
+a model either way.
+
 ## Layout
 
 ```text

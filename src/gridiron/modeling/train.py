@@ -63,6 +63,9 @@ class TrainingMetadata:
 def train_model(
     X_train: pd.DataFrame,  # noqa: N803 - the phase brief fixes this name
     y_train: pd.Series,
+    *,
+    c: float = 1.0,
+    class_weight: str | None = None,
 ) -> Pipeline:
     """Fit the pipeline on the training rows and nothing else.
 
@@ -73,6 +76,10 @@ def train_model(
     The returned pipeline has learned its imputation medians and scaling
     statistics from these rows alone. Nothing that is not in ``X_train`` can
     have influenced them, which is what keeps a later test fold clean.
+
+    ``c`` and ``class_weight`` are keyword-only and default to the untuned
+    settings, so the two-argument call the rest of the project makes is
+    unchanged; the hyperparameter search uses them to vary the fit.
     """
     if not isinstance(X_train, pd.DataFrame):
         raise TrainingError("X_train must be a DataFrame so feature names are kept.")
@@ -110,7 +117,9 @@ def train_model(
         )
 
     ordered = X_train[expected]
-    return build_pipeline().fit(ordered, labels.astype(int))
+    return build_pipeline(c=c, class_weight=class_weight).fit(
+        ordered, labels.astype(int)
+    )
 
 
 def chronological_split(

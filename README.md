@@ -1544,6 +1544,68 @@ now taken inside `savefig`. And titles set with `loc="left"` are invisible to
 `get_title()`, which reads the centre slot; the test was reporting every panel
 as untitled when all nine had titles.
 
+## The test suite
+
+```bash
+pytest                              # everything
+pytest tests/test_leakage.py        # one area
+pytest -k "spread and convention"   # one idea
+```
+
+616 tests across 24 files. They run in about a minute and need no network, no
+credentials, and no downloaded data.
+
+### What is covered
+
+| Area | Files |
+|---|---|
+| Data contracts — required columns, unique IDs, canonical team names, parseable dates, numeric scores and spreads | `test_data_contracts.py`, `test_clean.py`, `test_download.py` |
+| Leakage — every rolling feature is built from games strictly before the one it describes | `test_leakage.py`, `test_rolling_features.py` |
+| Feature correctness — EPA, pace, rest, the matchup merge, the target | `test_epa.py`, `test_pace.py`, `test_team_games.py`, `test_matchup_merge.py`, `test_target.py` |
+| Model pipeline — fitting, feature order, splits, walk-forward, tuning, calibration, policies | `test_pipeline.py`, `test_walk_forward.py`, `test_tuning.py`, `test_calibration.py`, `test_policies.py`, `test_baselines.py` |
+| Shipping — deployment artefacts, interpretation, reports | `test_deploy.py`, `test_interpretation.py`, `test_reports.py`, `test_eda.py` |
+| Weekly predictions — the table, the report, the refusals | `test_predictions.py` |
+| End to end — `scripts/predict_week.py` run as a command | `test_predict_week_command.py` |
+| Reproducibility and conformance to the written specification | `test_config.py`, `test_spec_conformance.py` |
+
+### Fixtures are small, fixed, and hand-checked
+
+Almost every test builds its own frame of four to twenty rows with a seeded
+generator, and asserts a number that can be worked out by hand. A five-row
+frame that fails on exactly one thing localises a bug; a thousand random rows
+do not.
+
+The contract tests go one step further: each breaks one contract on purpose and
+asserts that the error message *names* the broken contract. A validator that
+raises `ValueError: invalid input` is barely better than one that does not
+raise — whoever hits it still has to go and find out what happened.
+
+### The end-to-end smoke test
+
+`test_predict_week_command.py` runs the weekly command the way a person does —
+argument parsing, data loading, feature rebuild, scoring, and both output files
+— against a synthetic universe of four teams, fifteen played weeks, and one
+unplayed week. It builds its own fitted model into a temporary directory and
+points the loader at its own parquet files, so it exercises the real code path
+without the repository's data or `models/`. It also asserts the default run
+never downloads anything: the download helpers are replaced with functions that
+raise, and the run still succeeds.
+
+### Skips on a clean clone are expected
+
+On a fresh checkout with no downloaded data, the suite reports **589 passed, 27
+skipped, 0 failed**. The 27 are the tests that check properties of the real
+2016–2026 data — the LA/LAR join, the observed missingness rates, the spread
+convention against 2,574 settled games — and they skip with a stated reason
+rather than fail:
+
+```text
+SKIPPED [4] tests/test_epa.py: raw play-by-play parquet is not available
+SKIPPED [8] tests/test_matchup_merge.py: raw parquet data is not available
+```
+
+Run `python scripts/download_data.py` and all 616 run.
+
 ## Layout
 
 ```text

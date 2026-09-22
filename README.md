@@ -1384,6 +1384,94 @@ informative probabilities.
 The script says it plainly at the end: shipping this model is not a
 recommendation to bet with it.
 
+## Weekly predictions
+
+```bash
+python scripts/predict_week.py --season 2026 --week 3
+python scripts/predict_week.py --season 2026 --week 3 --refresh-data
+```
+
+Writes `outputs/predictions/week_NN_predictions.csv` and a formatted
+`week_NN_report.txt`.
+
+### The pipeline is rebuilt from source every run
+
+Not read from a cached feature table. The rolling features for week *n* depend
+on every completed game before it, so a run made after last week's results
+landed must produce different numbers than one made before. Recomputing is the
+only way that happens reliably, and it is what makes
+*"re-running after new games updates rolling metrics"* true rather than hoped
+for.
+
+`--refresh-data` downloads the schedule and **only the in-progress season's**
+play-by-play. The historical file does not change once a season is over, so
+re-fetching 182MB every week would move a lot of bytes to learn nothing. The
+2026 file is 5,489 plays.
+
+### Two things it will not do
+
+**Predict a game that has already been played.** A completed game has a result,
+not a recommendation, and including one would quietly inflate any apparent
+accuracy. Asking for a finished week is refused outright:
+
+```
+ERROR Every game in season 2026, week 1 has already been played;
+      there is nothing to recommend.
+```
+
+**Call the schedule spread a live market quote.** nflverse ships one line per
+game with no timestamp of its own. Every row records `spread_line_used`,
+`spread_timestamp`, and `spread_source`, which reads
+*"nflverse schedule line (not a live sportsbook quote)"*. A test asserts that
+wording.
+
+### Games without a line are pending, not dropped
+
+A missing spread means the target is undefined, not that the matchup does not
+exist. Those rows are listed with null probabilities, an empty predicted side,
+and `status = "pending: no spread line available"`. Week 6 of 2026 currently
+returns 14 rows, all pending, because lines are not posted that far out.
+
+### A real run: 2026 week 3
+
+At the time of writing the data on disk was five weeks stale — captured
+2026-08-15, before the season began — so a run without `--refresh-data` would
+have recommended games already finished. With the refresh, weeks 1 and 2 are
+complete and week 3 is genuinely upcoming:
+
+```
+Gridiron predictions - 2026 week 3
+Data refreshed at : 2026-09-22T20:04:54+00:00
+Spread line       : nflverse schedule line (not a live sportsbook quote)
+Games in week     : 16 upcoming (16 predicted, 0 pending)
+
+  2026-09-24  ATL at GB    line +6.0   home 0.4997 / away 0.5003  -> ATL (0.0003, lean only)
+  2026-09-27  KC at MIA    line -11.5  home 0.5532 / away 0.4468  -> MIA (0.0532, medium confidence)
+  ...
+```
+
+`prior_games_this_season` is 2 on every row, which is the rolling metrics
+picking up the two completed weeks — the acceptance criterion, verified rather
+than assumed.
+
+Probabilities sum to 1 to within 1.1e-16, and the feature schema is validated
+against `models/feature_schema.json` before anything is scored, so a
+reordered or short matrix raises instead of being silently misread.
+
+### Every report carries the caveat
+
+The model's out-of-sample numbers are printed under each week's picks, followed
+by:
+
+> This model has no demonstrated edge against the spread. Its out-of-sample
+> accuracy is near chance, its probabilities score worse than a flat 0.50, and
+> no confidence threshold produced a profit in backtesting. These are model
+> outputs, not betting advice.
+
+A test asserts that sentence is present. The confidence tiers describe how far
+a call sits from a coin flip and nothing more — "medium confidence" on a 0.553
+probability is a statement about the model, not about the game.
+
 ## Layout
 
 ```text

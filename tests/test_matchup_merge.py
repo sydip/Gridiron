@@ -323,14 +323,30 @@ def test_real_completed_games_are_labelled_except_pushes(real_matchups):
     assert (unlabelled["is_push"] | unlabelled["spread_line"].isna()).all()
 
 
-def test_real_2026_rows_exist_with_no_target(real_matchups):
-    upcoming = real_matchups.loc[real_matchups["season"].eq(2026)]
+def test_real_unplayed_games_have_features_but_no_target(real_matchups):
+    """The durable invariant, not a fact about one data snapshot.
+
+    An earlier version asserted that *every* 2026 row was unlabelled, which
+    held only while the prediction season had not started. Once weeks began
+    completing, the assertion broke without anything being wrong: a played
+    game is supposed to have a target. What must always hold is that an
+    *unplayed* game has none, and still carries its schedule-derived features.
+    """
+    upcoming = real_matchups.loc[real_matchups["home_score"].isna()]
 
     assert len(upcoming) > 0
     assert upcoming["home_cover"].isna().all()
-    # Schedule-derived features are available for unplayed games.
+    # Schedule-derived features are available even without a result.
     assert upcoming["div_game"].notna().all()
     assert upcoming["rest_diff"].notna().all()
+
+
+def test_real_prediction_season_is_present(real_matchups):
+    """The 2026 rows exist whether or not any of them have been played yet."""
+    upcoming = real_matchups.loc[real_matchups["season"].eq(2026)]
+
+    assert len(upcoming) > 0
+    assert upcoming["div_game"].notna().all()
 
 
 def test_real_feature_matrix_holds_no_postgame_field(real_matchups):
@@ -344,7 +360,7 @@ def test_real_feature_matrix_holds_no_postgame_field(real_matchups):
 
 def test_real_early_season_games_are_kept_not_dropped(real_matchups):
     """Week 1 is sparse by design, but every week 1 game still has a row."""
-    played = real_matchups.loc[real_matchups["season"].lt(2026)]
+    played = real_matchups.loc[real_matchups["home_score"].notna()]
     week_one = played.loc[played["week"].eq(1)]
 
     assert len(week_one) > 150

@@ -1,0 +1,44 @@
+# The baseline feature set. Deliberately small: logistic regression assumes
+# linearity in the log-odds, rolling football metrics are heavily correlated,
+# and there are only a few thousand regular-season games to learn from.
+baseline:
+  - spread_line
+  - off_epa_diff_last_5
+  - def_epa_strength_diff_last_5
+  - pace_diff_last_5
+  - rest_diff
+  - point_margin_diff_last_5
+  - win_pct_diff_last_5
+  - home_short_week
+  - away_short_week
+  - div_game
+  - week_1_flag
+
+# Built and available in the wide matchup table, but not in the baseline model.
+available:
+  market:
+    - absolute_spread
+    - home_favorite
+    - close_game_line
+    - large_favorite
+  windows:
+    - off_epa_diff_last_3
+    - off_epa_diff_season
+    - def_epa_strength_diff_last_3
+    - def_epa_strength_diff_season
+    - pace_diff_last_3
+    - pace_diff_season
+    - point_margin_diff_last_3
+    - ats_margin_diff_last_5
+    - cover_rate_diff_last_5
+
+definitions:
+  offensive_epa: mean EPA per eligible offensive play
+  defensive_epa_strength: negated EPA allowed, so higher is a stronger defence
+  pace: eligible offensive plays per team-game
+  rest_days: days since that team's previous game in the same season
+  week_one_rest_days: 7
+
+leakage:
+  rule: shift by one game before any rolling window
+  reset: rolling and season-to-date values restart each season

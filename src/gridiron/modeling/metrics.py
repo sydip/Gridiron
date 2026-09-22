@@ -186,6 +186,46 @@ def comparison_table(
     return table.sort_values("roi", ascending=False).reset_index(drop=True)
 
 
+def accuracy_by_market_role(
+    matchups: pd.DataFrame,
+    predictions: pd.Series,
+) -> pd.DataFrame:
+    """Accuracy split by whether the pick was on the favourite or the underdog.
+
+    A strategy can look even overall while being systematically wrong on one
+    side of the market, which this separates out. The favourite is the home
+    team when ``spread_line`` is positive, following the verified nflverse
+    convention; a pick'em game has no favourite and is reported as its own row.
+    """
+    if "spread_line" not in matchups.columns:
+        raise MetricError("Cannot split by market role; missing 'spread_line'.")
+
+    actual, predicted = _aligned(matchups, predictions)
+    spread = pd.to_numeric(matchups["spread_line"], errors="coerce")
+
+    # The pick is on the favourite when it agrees with the side the market
+    # priced as stronger. A spread of exactly zero has no favourite.
+    picked_home = predicted.eq(1)
+    picked_favourite = (spread.gt(0) & picked_home) | (spread.lt(0) & ~picked_home)
+    picked_underdog = (spread.gt(0) & ~picked_home) | (spread.lt(0) & picked_home)
+
+    role = pd.Series("pick'em", index=matchups.index, dtype=object)
+    role.loc[picked_favourite] = "backed the favourite"
+    role.loc[picked_underdog] = "backed the underdog"
+
+    frame = pd.DataFrame(
+        {"role": role.to_numpy(), "correct": (actual == predicted).to_numpy()}
+    )
+    grouped = frame.groupby("role", sort=True)["correct"].agg(["size", "sum"])
+    grouped.columns = ["bets", "wins"]
+    grouped["losses"] = grouped["bets"] - grouped["wins"]
+    grouped["accuracy"] = grouped["wins"] / grouped["bets"]
+    grouped["roi"] = [
+        roi(int(row.wins), int(row.losses)) for row in grouped.itertuples()
+    ]
+    return grouped.reset_index()
+
+
 def season_table(
     matchups: pd.DataFrame,
     strategies: dict[str, pd.Series],

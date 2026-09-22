@@ -1,0 +1,46 @@
+# Project-wide settings. The model's tuned hyperparameters live in
+# config/model_params.json, which the tuning phase writes and training reads;
+# this file holds the decisions that do not come from a search.
+project:
+  name: gridiron
+  random_seed: 42
+
+data:
+  training_seasons:
+    - 2016
+    - 2017
+    - 2018
+    - 2019
+    - 2020
+    - 2021
+    - 2022
+    - 2023
+    - 2024
+    - 2025
+  prediction_season: 2026
+  game_type: REG
+  cache_mode: filesystem
+
+features:
+  rolling_windows:
+    - 3
+    - 5
+  minimum_periods: 1
+  week_one_rest_days: 7
+  include_market_spread: true
+
+model:
+  type: logistic_regression
+  penalty: l2
+  solver: liblinear
+  max_iter: 2000
+  class_weight: null
+
+prediction:
+  default_threshold: 0.50
+  confidence_threshold: 0.04
+
+betting:
+  american_odds: -110
+  unit_size: 1.0
+  exclude_pushes: true

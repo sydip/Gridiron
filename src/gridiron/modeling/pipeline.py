@@ -31,15 +31,24 @@ from gridiron.features.matchup import (
 
 TARGET_COLUMN = "home_cover"
 
-IMPUTE_STEP = "impute"
-SCALE_STEP = "scale"
-MODEL_STEP = "model"
+# Step names follow the project specification so a caller can reach a step by
+# the name the spec uses.
+IMPUTE_STEP = "imputer"
+SCALE_STEP = "scaler"
+MODEL_STEP = "classifier"
 
-# lbfgs is deterministic for a given dataset, so repeated fits agree exactly.
-# random_state is set regardless, so swapping in a stochastic solver later
-# cannot silently make results irreproducible.
-SOLVER = "lbfgs"
-MAX_ITER = 1000
+# liblinear is deterministic for a given dataset, so repeated fits agree
+# exactly. random_state is set regardless, so swapping in a stochastic solver
+# later cannot silently make results irreproducible.
+SOLVER = "liblinear"
+MAX_ITER = 2000
+
+# The specification calls for L2 regularisation, which is what this pipeline
+# uses. It is NOT passed explicitly: scikit-learn deprecated the ``penalty``
+# argument in 1.8 and removes it in 1.10, and L2 is the default, so naming it
+# would buy a deprecation warning and a future breakage for no change in
+# behaviour. The regularisation strength is set through ``C``.
+PENALTY = "l2"
 
 
 class PipelineError(ValueError):

@@ -1,0 +1,23 @@
+# The hyperparameter search space. The chosen values, and the reasoning that
+# chose them, are written to config/model_params.json by scripts/tune_model.py.
+search:
+  C: [0.01, 0.1, 0.5, 1.0, 2.0, 10.0]
+  class_weight: [null, balanced]
+
+# Selection is ranked, and never by return: optimising a twelve-cell grid for
+# ROI on near-coinflip games selects the luckiest cell, not the best one.
+selection:
+  order:
+    - mean_log_loss
+    - mean_brier
+    - accuracy_stability
+    - mean_accuracy
+    - coefficient_magnitude
+  log_loss_tolerance: 0.001
+  brier_tolerance: 0.001
+  accuracy_tolerance: 0.005
+
+validation:
+  first_validation_season: 2019
+  final_validation_season: 2025
+  scheme: expanding_window_by_season

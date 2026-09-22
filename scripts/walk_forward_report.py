@@ -37,6 +37,7 @@ from gridiron.modeling.splits import (
     FINAL_VALIDATION_SEASON,
     FIRST_VALIDATION_SEASON,
 )
+from gridiron.modeling.tuning import load_selected_parameters
 
 LOGGER = logging.getLogger("walk_forward_report")
 
@@ -65,7 +66,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     matchups = pd.read_csv(args.matchup_path, parse_dates=["gameday"])
-    predictions, folds = run_walk_forward(matchups, args.first, args.final)
+    # Use the hyperparameters the tuning phase chose, so this report describes
+    # the model the project actually ships rather than an untuned variant.
+    selection = load_selected_parameters()
+    predictions, folds = run_walk_forward(
+        matchups,
+        args.first,
+        args.final,
+        c=selection.c,
+        class_weight=selection.class_weight,
+    )
     seasons = season_metrics(predictions)
     aggregate = aggregate_metrics(predictions)
     quality = probability_quality(predictions)

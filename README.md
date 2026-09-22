@@ -1117,6 +1117,93 @@ prediction of 0.55 to the 5-point policy and turned away its mirror image at
 0.45 — the two sides of the threshold were being treated differently.
 Comparisons now carry a tolerance.
 
+## Specification conformance
+
+The project was audited against the full written specification. Most of it
+already conformed; this records what changed and, more importantly, the one
+place where the specification and the data disagree.
+
+### The spread sign convention: the data wins
+
+§4 offers a formula under "a common representation" where a **negative** spread
+means the home team is favoured, giving
+`adjusted_home_margin = home_margin + spread_line`.
+
+**That is not the convention in this data.** nflverse prices the home side, so a
+**positive** `spread_line` means the home team is favoured, and the correct
+formula is `home_margin − spread_line`, which is what the code has always used.
+Three independent checks agree:
+
+- mean actual home margin rises monotonically with `spread_line` and tracks it
+  closely (a +7 to +10 spread produces a +8.67 average margin),
+- the correlation between `spread_line` and home margin is **+0.4464**,
+- **99.4%** of games where the home team is the moneyline favourite have
+  `spread_line > 0`.
+
+§4 anticipates exactly this — "the pipeline must validate the convention before
+calculating the target" — so the code stands and the validation is now
+automated. `validate_spread_convention()` derives the convention from the data
+and reports whether it agrees with what the target calculation assumes. A test
+runs it against the real schedule, and another feeds it a deliberately reversed
+feed to prove it would catch one. Had the specification's example formula been
+adopted, **every label in the project would be inverted**.
+
+The 25-game manual audit fixture (§4 asks for at least 20) remains in
+`outputs/reports/spread_validation_sample.csv`, re-derived independently by
+`tests/test_target.py`.
+
+### Changed to conform
+
+| Item | Was | Now |
+| --- | --- | --- |
+| Pipeline step names | `impute` / `scale` / `model` | `imputer` / `scaler` / `classifier` |
+| Solver | `lbfgs` | `liblinear` |
+| `max_iter` | 1000 | 2000 |
+| `confidence` | `max(p, 1−p)` | `abs(p − 0.50)` |
+| Classification metrics | accuracy, log loss, Brier | plus balanced accuracy, precision, recall, F1, ROC-AUC |
+| Market features | — | `absolute_spread`, `home_favorite`, `close_game_line`, `large_favorite` |
+| Confidence tiers | — | lean only / low / medium / high |
+| `away_cover_probability` | — | added to the prediction table |
+| No-bet baseline | — | `predict_no_bet` |
+| Accuracy by market role | — | `accuracy_by_market_role` |
+| Config files | `config/model_params.json` only | plus `configs/base.yaml`, `model.yaml`, `features.yaml` |
+
+`tests/test_spec_conformance.py` pins all of it, including tests that the YAML
+config values match the code they describe, so the two cannot drift apart.
+
+### One deliberate deviation
+
+§9 specifies `penalty="l2"`. **L2 is what the model uses** — it is scikit-learn's
+default — but it is *not passed explicitly*, because scikit-learn deprecated the
+`penalty` argument in 1.8 and removes it in 1.10. Naming it buys a deprecation
+warning now and a hard breakage later for no change in behaviour. A test asserts
+the L2 *behaviour* (coefficients shrink toward zero without reaching it) rather
+than the argument.
+
+### Effect of the changes
+
+Switching `lbfgs` to `liblinear` moved the numbers slightly. The conclusions did
+not move at all:
+
+| | Before | After |
+| --- | --- | --- |
+| Mean season accuracy | 0.5011 | 0.5064 |
+| ROC-AUC | — | **0.4810** |
+| Log loss | 0.6989 | 0.6964 (vs ln 2 = 0.6931) |
+| Brier | 0.2528 | 0.2516 (vs 0.2500) |
+| Walk-forward ROI | −0.0444 | −0.0340 |
+
+Still no edge: ROC-AUC below 0.5, log loss and Brier both worse than predicting
+a flat 0.5, recall of 0.327 against precision of 0.490.
+
+One result did change usefully. With the tuned settings the `>= 10pp` policy —
+previously the only profitable row, at +9.09% on seven bets — now goes **4-4 for
+−4.55%**. A number that flips sign when the solver changes was never evidence of
+anything, which is precisely what its sample-size warning said.
+
+The model also backs underdogs better than favourites (51.94% against 48.41%),
+and both lose money.
+
 ## Layout
 
 ```text

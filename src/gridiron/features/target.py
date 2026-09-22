@@ -81,3 +81,56 @@ def add_ats_target(schedules: pd.DataFrame) -> pd.DataFrame:
     )
     result["is_push"] = result["ats_result"].eq(PUSH)
     return result
+
+
+# The two possible readings of the nflverse home spread. Which one applies is a
+# property of the data, not something to assume: getting it backwards inverts
+# every label in the project.
+HOME_FAVOURED_WHEN_POSITIVE = "positive spread means the home team is favoured"
+HOME_FAVOURED_WHEN_NEGATIVE = "negative spread means the home team is favoured"
+
+
+def validate_spread_convention(schedules: pd.DataFrame) -> dict[str, object]:
+    """Check which way ``spread_line`` points, from the data itself.
+
+    If a positive spread means the home team is favoured, then the actual home
+    margin must rise with the spread -- so the correlation between the two is
+    positive. If the convention were reversed, that correlation would be
+    negative.
+
+    Returns the detected convention, the correlation behind it, and whether it
+    matches the one :func:`calculate_adjusted_home_margin` assumes. A caller
+    that finds ``agrees_with_implementation`` false must stop: every label in
+    the project would be inverted.
+    """
+    missing = sorted(TARGET_SOURCE_COLUMNS.difference(schedules.columns))
+    if missing:
+        raise AtsTargetError(
+            "Cannot validate the spread convention; missing column(s): "
+            + ", ".join(missing)
+        )
+
+    played = schedules.dropna(subset=["home_score", "away_score", "spread_line"])
+    if len(played) < 100:
+        raise AtsTargetError(
+            f"Need at least 100 completed games to validate the convention; "
+            f"got {len(played)}."
+        )
+
+    margin = pd.to_numeric(played["home_score"], errors="coerce") - pd.to_numeric(
+        played["away_score"], errors="coerce"
+    )
+    spread = pd.to_numeric(played["spread_line"], errors="coerce")
+    correlation = float(margin.corr(spread))
+
+    convention = (
+        HOME_FAVOURED_WHEN_POSITIVE if correlation > 0 else HOME_FAVOURED_WHEN_NEGATIVE
+    )
+    return {
+        "convention": convention,
+        "correlation": correlation,
+        "games": int(len(played)),
+        # calculate_adjusted_home_margin subtracts the spread, which is correct
+        # only when a positive spread means the home team is favoured.
+        "agrees_with_implementation": bool(correlation > 0),
+    }

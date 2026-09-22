@@ -15,7 +15,15 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import brier_score_loss, log_loss
+from sklearn.metrics import (
+    balanced_accuracy_score,
+    brier_score_loss,
+    f1_score,
+    log_loss,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.pipeline import Pipeline
 
 from gridiron.modeling.metrics import WIN_PROFIT, roi
@@ -46,9 +54,21 @@ PREDICTION_COLUMNS = [
     "actual_home_cover",
     "predicted_home_cover",
     "home_cover_probability",
+    "away_cover_probability",
     "predicted_side",
     "confidence",
+    "confidence_tier",
 ]
+
+# Descriptive bands for the edge the model claims. They describe how far a
+# prediction sits from a coin flip and nothing more: none of them is a claim
+# that betting at that level is profitable.
+CONFIDENCE_TIERS = (
+    (0.52, "lean only"),
+    (0.55, "low confidence"),
+    (0.58, "medium confidence"),
+    (1.01, "high model confidence"),
+)
 
 AGGREGATE_ROWS = [
     "mean_season_accuracy",
@@ -57,6 +77,11 @@ AGGREGATE_ROWS = [
     "best_season_accuracy",
     "accuracy_std",
     "pooled_accuracy",
+    "balanced_accuracy",
+    "precision",
+    "recall",
+    "f1",
+    "roc_auc",
     "log_loss",
     "brier_score",
     "roi",
@@ -65,6 +90,25 @@ AGGREGATE_ROWS = [
 
 class EvaluationError(ValueError):
     """Raised when a backtest cannot be run or scored."""
+
+
+def confidence_tier(probability: np.ndarray | pd.Series) -> np.ndarray:
+    """Label each prediction with a descriptive confidence band.
+
+    The bands describe the strength of the claim, never its profitability.
+    A prediction at 0.59 is one the model is relatively sure of; whether it is
+    worth acting on is a separate question the backtest answers, and on this
+    data the answer is no.
+    """
+    strength = np.maximum(np.asarray(probability), 1.0 - np.asarray(probability))
+    labels = np.empty(strength.shape, dtype=object)
+    remaining = np.ones(strength.shape, dtype=bool)
+    for bound, label in CONFIDENCE_TIERS:
+        selected = remaining & (strength < bound)
+        labels[selected] = label
+        remaining &= ~selected
+    labels[remaining] = CONFIDENCE_TIERS[-1][1]
+    return labels
 
 
 def _fold_predictions(
@@ -87,10 +131,12 @@ def _fold_predictions(
             "actual_home_cover": target_vector(validation).to_numpy(),
             "predicted_home_cover": predicted,
             "home_cover_probability": probability,
+            "away_cover_probability": 1.0 - probability,
             "predicted_side": np.where(predicted == 1, HOME, AWAY),
-            # The probability assigned to the side actually picked. 0.5 means
-            # the model is indifferent; 1.0 would mean certainty.
-            "confidence": np.maximum(probability, 1.0 - probability),
+            # The edge over a coin flip, as the specification defines it:
+            # abs(p - 0.50). Zero means indifferent, 0.5 would mean certainty.
+            "confidence": np.abs(probability - 0.5),
+            "confidence_tier": confidence_tier(probability),
         },
         index=validation.index,
     )
@@ -260,6 +306,10 @@ def aggregate_metrics(predictions: pd.DataFrame) -> pd.DataFrame:
     )
     losses = len(predictions) - correct
 
+    actual = predictions["actual_home_cover"].astype(int)
+    predicted = predictions["predicted_home_cover"].astype(int)
+    probability = predictions["home_cover_probability"]
+
     values = {
         "mean_season_accuracy": float(accuracies.mean()),
         "median_season_accuracy": float(accuracies.median()),
@@ -267,6 +317,19 @@ def aggregate_metrics(predictions: pd.DataFrame) -> pd.DataFrame:
         "best_season_accuracy": float(accuracies.max()),
         "accuracy_std": float(accuracies.std(ddof=1)) if len(accuracies) > 1 else 0.0,
         "pooled_accuracy": correct / len(predictions),
+        # Balanced accuracy averages the two class recalls, so a model that
+        # simply favours the more common side cannot score well on it.
+        "balanced_accuracy": float(balanced_accuracy_score(actual, predicted)),
+        # Precision and recall are reported for the home-cover class;
+        # zero_division=0 keeps them defined when a model never predicts it.
+        "precision": float(precision_score(actual, predicted, zero_division=0)),
+        "recall": float(recall_score(actual, predicted, zero_division=0)),
+        "f1": float(f1_score(actual, predicted, zero_division=0)),
+        "roc_auc": (
+            float(roc_auc_score(actual, probability))
+            if actual.nunique() > 1
+            else float("nan")
+        ),
         "log_loss": _safe_log_loss(predictions),
         "brier_score": float(
             brier_score_loss(

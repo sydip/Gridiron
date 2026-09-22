@@ -76,6 +76,20 @@ FEATURE_COLUMNS = [
     "week_1_flag",
 ]
 
+# Derived market descriptors. They are built from the pregame line alone, so
+# they are available before kickoff, but they are deliberately NOT part of
+# FEATURE_COLUMNS: the agreed baseline feature set is spread_line itself, and
+# these are near-duplicates of it kept for later experimentation.
+MARKET_COLUMNS = [
+    "absolute_spread",
+    "home_favorite",
+    "close_game_line",
+    "large_favorite",
+]
+
+CLOSE_GAME_POINTS = 3.0
+LARGE_FAVORITE_POINTS = 7.0
+
 TARGET_COLUMNS = ["home_cover", "is_push"]
 
 MODEL_ROW_COLUMNS = [*IDENTIFIER_COLUMNS, *FEATURE_COLUMNS, *TARGET_COLUMNS]
@@ -230,6 +244,16 @@ def build_matchups(
             matchups[output] = pd.to_numeric(
                 matchups[home_column], errors="coerce"
             ) - pd.to_numeric(matchups[away_column], errors="coerce")
+
+    # nflverse prices the home side: a POSITIVE spread_line means the home team
+    # is favoured. This is the opposite of the sign convention used by many
+    # sportsbook feeds, and was verified against the data before being relied
+    # on -- see validate_spread_convention.
+    spread = pd.to_numeric(matchups["spread_line"], errors="coerce")
+    matchups["absolute_spread"] = spread.abs()
+    matchups["home_favorite"] = spread.gt(0).astype("int8")
+    matchups["close_game_line"] = spread.abs().le(CLOSE_GAME_POINTS).astype("int8")
+    matchups["large_favorite"] = spread.abs().ge(LARGE_FAVORITE_POINTS).astype("int8")
 
     matchups["div_game"] = (
         matchups["home_team"].map(TEAM_DIVISION)

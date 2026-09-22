@@ -8,6 +8,7 @@ import pytest
 
 from gridiron.modeling.evaluate import (
     AGGREGATE_ROWS,
+    CONFIDENCE_TIERS,
     PREDICTION_COLUMNS,
     UNINFORMATIVE_BRIER,
     UNINFORMATIVE_LOG_LOSS,
@@ -227,14 +228,33 @@ def test_probability_and_prediction_agree_at_the_threshold(backtest):
     ).all()
 
 
-def test_confidence_is_the_probability_of_the_chosen_side(backtest):
+def test_confidence_is_the_edge_over_a_coin_flip(backtest):
+    """The specification defines confidence as abs(p - 0.50)."""
     predictions, _ = backtest
     probability = predictions["home_cover_probability"]
 
-    expected = np.maximum(probability, 1 - probability)
+    expected = (probability - 0.5).abs()
     assert predictions["confidence"].to_numpy() == pytest.approx(expected.to_numpy())
-    assert (predictions["confidence"] >= 0.5).all()
-    assert (predictions["confidence"] <= 1.0).all()
+    assert (predictions["confidence"] >= 0.0).all()
+    assert (predictions["confidence"] <= 0.5).all()
+
+
+def test_away_probability_is_the_complement(backtest):
+    predictions, _ = backtest
+
+    total = (
+        predictions["home_cover_probability"] + predictions["away_cover_probability"]
+    )
+    assert total.to_numpy() == pytest.approx(np.ones(len(predictions)))
+
+
+def test_every_prediction_carries_a_confidence_tier(backtest):
+    predictions, _ = backtest
+
+    assert predictions["confidence_tier"].notna().all()
+    assert set(predictions["confidence_tier"]).issubset(
+        {label for _, label in CONFIDENCE_TIERS}
+    )
 
 
 def test_fold_summary_records_the_expanding_window(backtest):
@@ -326,8 +346,10 @@ def test_a_perfect_model_scores_as_expected():
             "actual_home_cover": [1, 0, 1, 0],
             "predicted_home_cover": [1, 0, 1, 0],
             "home_cover_probability": [0.99, 0.01, 0.99, 0.01],
+            "away_cover_probability": [0.01, 0.99, 0.01, 0.99],
             "predicted_side": ["HOME", "AWAY", "HOME", "AWAY"],
-            "confidence": [0.99, 0.99, 0.99, 0.99],
+            "confidence": [0.49, 0.49, 0.49, 0.49],
+            "confidence_tier": ["high model confidence"] * 4,
         }
     )
     values = aggregate_metrics(predictions).set_index("metric")["value"]
@@ -353,8 +375,10 @@ def test_probability_quality_compares_against_knowing_nothing():
             "actual_home_cover": [1, 0, 1, 0],
             "predicted_home_cover": [1, 1, 1, 1],
             "home_cover_probability": [0.5, 0.5, 0.5, 0.5],
+            "away_cover_probability": [0.5, 0.5, 0.5, 0.5],
             "predicted_side": ["HOME"] * 4,
-            "confidence": [0.5] * 4,
+            "confidence": [0.0] * 4,
+            "confidence_tier": ["lean only"] * 4,
         }
     )
     quality = probability_quality(predictions)

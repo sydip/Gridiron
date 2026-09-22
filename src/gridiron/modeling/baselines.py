@@ -137,6 +137,18 @@ def epa_fallback_count(df: pd.DataFrame) -> int:
     return int(pd.to_numeric(df[EPA_COLUMN], errors="coerce").isna().sum())
 
 
+def predict_no_bet(df: pd.DataFrame) -> pd.Series:
+    """Decline every game.
+
+    The reference point every other strategy is really competing against. At
+    -110 a bet must win 52.38% of the time to break even, so abstaining returns
+    exactly zero -- which beats every strategy in this project. It returns an
+    all-null series, and the scoring code treats a null pick as a game not
+    played rather than as a loss.
+    """
+    return pd.Series(pd.NA, index=df.index, dtype="Int8", name="prediction")
+
+
 def predict_random(df: pd.DataFrame, seed: int = DEFAULT_SEED) -> pd.Series:
     """Pick a side at random, reproducibly.
 
@@ -149,6 +161,9 @@ def predict_random(df: pd.DataFrame, seed: int = DEFAULT_SEED) -> pd.Series:
     return pd.Series(draws, index=df.index, dtype="int8", name="prediction")
 
 
+# predict_no_bet is deliberately absent from this mapping: it places no bets,
+# so it has no win rate to compare, and comparison_table would divide by zero.
+# It is scored separately, as a zero-return reference line.
 BASELINES = {
     "home_every_game": predict_home_every_game,
     "away_every_game": predict_away_every_game,

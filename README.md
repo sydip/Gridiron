@@ -674,6 +674,95 @@ table beside these numbers.** Specifically:
 A model that reports a large edge on these features should be treated as
 suspect until it has survived the Phase 9 leakage tests and a held-out season.
 
+## The model
+
+```python
+python scripts/train_model.py                      # holds out 2024 and 2025
+python scripts/train_model.py --test-seasons 2025
+```
+
+```python
+from gridiron.modeling import build_pipeline, get_feature_columns, train_model
+```
+
+### Everything happens inside the pipeline
+
+```text
+SimpleImputer(strategy="median")  ->  StandardScaler()  ->  LogisticRegression()
+```
+
+That is not a stylistic choice, it is what makes the model leakage-safe. An
+imputer fitted outside the pipeline learns its medians from whatever frame it
+is handed; a scaler fitted outside learns its means the same way. Both would
+absorb the test fold. Inside a pipeline, `fit` sees only the rows it is given
+and `transform` reuses those statistics at predict time.
+
+The order is fixed: impute first, because a scaler cannot average over missing
+values; standardise second, because the L2 penalty would otherwise punish a
+feature measured in points far more than one measured in EPA per play.
+
+Three tests enforce this rather than trusting it. Two assert the learned
+medians and scaling means equal the **training** statistics and differ from the
+full-data statistics; a third confirms fitting on more rows *does* change them,
+so the first two could have failed.
+
+### Splits are chronological, never random
+
+A random split would put January games in training and the previous September's
+games in test — a subtler leak than anything the pipeline guards against, since
+the model would be tested on a season it had partly seen through its own rolling
+features. `chronological_split` holds out whole seasons by default.
+
+### Feature order travels with the model
+
+`get_feature_columns()` is the contract. scikit-learn stores it on the fitted
+pipeline as `feature_names_in_` and **checks it on every predict call**, so a
+frame whose columns arrive reordered raises instead of being scored against the
+wrong coefficients. It is also written to
+`models/logistic_regression.metadata.json`, readable without unpickling
+anything, alongside the row count, class balance, date range, and seed.
+
+`model_coefficients()` maps the fitted coefficients back to feature names on the
+standardised scale — log-odds per standard deviation, directly comparable across
+features in different units.
+
+### Held-out results: the model does not add value
+
+Trained on 2016-2023 (2,035 games), held out on 2024-2025 (539 games). The model
+is scored through the same metric code as the baselines, on the same games:
+
+| Strategy | Record | Accuracy | ROI |
+| --- | --- | --- | --- |
+| better_epa | 284-255 | 0.5269 | **+0.0059** |
+| favorite | 274-265 | 0.5083 | −0.0295 |
+| home_every_game | 272-267 | 0.5046 | −0.0366 |
+| away_every_game | 267-272 | 0.4954 | −0.0543 |
+| underdog | 265-274 | 0.4917 | −0.0614 |
+| random | 261-278 | 0.4842 | −0.0756 |
+| **MODEL logistic_regression** | **251-288** | **0.4657** | **−0.1110** |
+
+**The model finishes last.** It is beaten by every trivial strategy including
+random, and it is the only entry below 47% accuracy.
+
+This is not an orientation bug, which was checked: in training, actual cover
+rate rises monotonically across predicted-probability quintiles (0.442 to
+0.543), so the model learned a real in-sample relationship in the right
+direction. On the held-out seasons that relationship **inverts** (0.565 in the
+lowest quintile, 0.472 in the highest). Training accuracy is 0.5224 against a
+held-out 0.4657.
+
+The honest reading is that the model overfitted a pattern that does not
+generalise. The largest coefficients say better recent offensive and defensive
+EPA make a team *less* likely to cover — a plausible market-overreaction story
+in sample, and one that simply did not hold in 2024-2025.
+
+No tuning was done against the held-out seasons, because choosing a model by its
+test score is how a test set stops being one. The result stands as measured.
+
+`scripts/train_model.py` prints this verdict itself and states plainly when the
+model has not been shown to add value, so the comparison cannot be omitted by
+whoever reads the output next.
+
 ## Layout
 
 ```text

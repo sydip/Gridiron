@@ -950,6 +950,87 @@ It picked the most defensible cell in the grid and recorded why. It did not
 produce a useful model, and the warnings say so in the configuration file
 itself, so anyone loading these parameters sees the caveats alongside them.
 
+## Calibration
+
+```python
+python scripts/calibration_report.py
+```
+
+Three charts to `outputs/figures/` (reliability diagram, prediction histogram,
+cover rate by bucket) and the reliability table plus calibration trial to
+`outputs/reports/`. **Assessed on the walk-forward predictions only** — no
+in-sample prediction is scored here.
+
+### Reliability, with counts on every row
+
+| Bucket | Games | Predicted | Observed | Gap | Sparse |
+| --- | --- | --- | --- | --- | --- |
+| <0.40 | 2 | 0.373 | 0.500 | +0.127 | **yes** |
+| 0.40-0.45 | 173 | 0.438 | 0.538 | **+0.099** | no |
+| 0.45-0.50 | 1,134 | 0.478 | 0.482 | +0.005 | no |
+| 0.50-0.55 | 481 | 0.516 | 0.480 | −0.035 | no |
+| 0.55-0.60 | 33 | 0.572 | 0.485 | **−0.087** | no |
+| 0.60-0.65 | 4 | 0.620 | 0.750 | +0.130 | **yes** |
+| 0.65+ | 1 | 0.686 | 0.000 | −0.686 | **yes** |
+
+Every figure carries its sample count and a standard error, because a
+three-game bucket looks identical to a thousand-game one otherwise. **Three
+buckets are sparse** (7 games total): their error bars are ±0.22 to ±0.35, far
+wider than any miscalibration worth acting on, and they are excluded from the
+bias test for that reason.
+
+The gap runs monotonically from **+0.099 to −0.087** across the populated
+buckets. That is a real systematic bias: predictions are spread wider than the
+outcomes justify.
+
+### Calibration was measured, and declined
+
+Systematic bias is the phase brief's trigger for adding `CalibratedClassifierCV`.
+It was not added, for reasons that were measured rather than assumed:
+
+- **AUC is 0.4805**, against a chance threshold of 0.5270 at this sample size.
+  The scores do not rank games — they rank them slightly *worse* than random.
+- **The calibration slope is −0.54.** Higher predicted probability goes with a
+  *lower* observed rate.
+
+The distinction that decides it is between **calibration** and
+**discrimination**. Calibration fixes whether the numbers mean what they say;
+discrimination is whether they rank one game above another at all. A calibrator
+can supply the first and never the second.
+
+A temporally-valid trial confirms it. Within each fold the model was fitted on
+the earlier training seasons and the calibrator on the latest training season
+alone — disjoint, both entirely before the validation season:
+
+| Probabilities | Log loss | Brier |
+| --- | --- | --- |
+| raw | 0.69611 | 0.25147 |
+| platt (temporal) | 0.69383 | 0.25033 |
+| isotonic (temporal) | 0.75977 | 0.25484 |
+| **constant base rate** | **0.69283** | **0.24984** |
+
+Platt "improves" log loss to 0.69383 — which is the base-rate figure to three
+decimals. It improves the model by deleting it. And its fitted coefficient
+flips sign across folds (`+0.15, −0.06, −0.21, −0.19, −0.01, +0.05, −0.24`), so
+it cannot even agree which direction to map scores in. Isotonic is markedly
+worse than raw, overfitting its single calibration season.
+
+### The threshold that a test corrected
+
+`MIN_USEFUL_AUC` was originally a flat 0.5. A test built from pure noise
+produced AUC 0.5122 — numerically above 0.5, and enough to authorise
+calibration on nothing at all. The floor is now **0.5 plus two null standard
+errors**, `sqrt((n1 + n0 + 1) / (12 · n1 · n0))`, which scales with the sample
+instead of being a fixed guess. On this data that threshold is 0.5270.
+
+### If the model ever does discriminate
+
+The machinery is built, tested, and temporally valid — `temporal_calibration_split`,
+`fit_calibrator`, `apply_calibrator`, and a `decide_calibration` rule that
+*recommends* calibration when scores rank but are biased (a test covers that
+case). It is waiting on a model whose scores rank games. Calibration is not the
+blocker here; discrimination is.
+
 ## Layout
 
 ```text

@@ -590,6 +590,90 @@ against every rolling feature. The flag is constant wherever a rolling feature
 is present, so the pair has no overlapping observations — the flag is perfectly
 confounded with the missingness it marks.
 
+## Baselines
+
+A model is only worth something if it beats the strategies that cost nothing to
+invent. These are those strategies:
+
+```python
+python scripts/baseline_report.py
+python scripts/baseline_report.py --require-epa   # complete cases only
+```
+
+| Function | Strategy |
+| --- | --- |
+| `predict_home_every_game` | Always back the home side |
+| `predict_away_every_game` | Always back the away side |
+| `predict_favorite` | Always back the favourite |
+| `predict_underdog` | Always back the underdog |
+| `predict_better_epa` | Back the better rolling offensive EPA |
+| `predict_random` | Pick a side at random, reproducibly |
+
+### One eligible set, shared by everything
+
+`eligible_games` is the single definition, and the model must use it too. A game
+is eligible when `home_cover` is non-null — which is null for a push, for an
+unplayed game, and for a game with no line, so **one condition excludes all
+three identically** for every strategy. A test asserts every baseline returns a
+prediction for every eligible game, because a strategy that quietly declined the
+games it found hard would be scored on a different sample.
+
+Two rules are stated rather than left to chance:
+
+- **Pick'em games have no favourite.** The 4 such games resolve to the home
+  side in `predict_favorite`, and inversely in `predict_underdog`.
+- **Season openers have no EPA history.** `predict_better_epa` falls back to the
+  home side for those 158 games, and `epa_fallback_count` reports how many it
+  decided that way. `--require-epa` re-runs the comparison without them so you
+  can see whether the fallback drove the result. It does not: the ranking is
+  unchanged.
+
+`predict_random` uses `default_rng(seed)`, so it is unaffected by global numpy
+state and reproduces across processes — verified by a test that seeds the legacy
+global RNG in between and gets identical picks.
+
+### Metrics
+
+Accuracy alone is misleading at a bookmaker's price. At the standard -110, a
+winning unit returns 100/110, so **break-even is 52.38% accuracy, not 50%**.
+Each strategy reports accuracy, ATS record, ROI, profit in units, season-by-
+season accuracy, and maximum drawdown (worst peak-to-trough fall on the profit
+curve, ordered by date).
+
+### Results over 2016-2025 (2,574 settled games)
+
+| Strategy | Record | Accuracy | ROI | Max drawdown |
+| --- | --- | --- | --- | --- |
+| underdog | 1316-1258 | 0.5113 | −0.0239 | 85.5 u |
+| away_every_game | 1311-1263 | 0.5093 | −0.0277 | 81.4 u |
+| better_epa | 1299-1275 | 0.5047 | −0.0366 | 127.6 u |
+| random | 1295-1279 | 0.5031 | −0.0395 | 126.0 u |
+| home_every_game | 1263-1311 | 0.4907 | −0.0633 | 168.7 u |
+| favorite | 1258-1316 | 0.4887 | −0.0670 | 181.5 u |
+
+**Every baseline loses money.** None reaches the 52.38% break-even; the best,
+backing underdogs, still returns −2.39%. This is what an efficient market looks
+like, and it is the honest starting point.
+
+Note that `better_epa` — the only baseline that uses a model feature — lands
+mid-table, barely ahead of random and behind simply backing every underdog. On
+complete cases it ties `away_every_game` exactly. The rolling EPA differential
+carries little standalone against-the-spread signal, which matches the weak
+univariate relationships the exploratory charts showed.
+
+### The bar for any model
+
+**No model in this project may be described as valuable without appearing in a
+table beside these numbers.** Specifically:
+
+- beating 50% accuracy is **not** evidence of anything — it is below break-even,
+- beating break-even (52.38%) is the minimum for a positive return,
+- beating the best baseline's −2.39% ROI is the minimum for having added
+  anything over a strategy requiring no model at all.
+
+A model that reports a large edge on these features should be treated as
+suspect until it has survived the Phase 9 leakage tests and a held-out season.
+
 ## Layout
 
 ```text

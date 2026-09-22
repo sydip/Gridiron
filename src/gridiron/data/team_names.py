@@ -71,3 +71,26 @@ def normalize_team_names(teams: pd.Series) -> pd.Series:
     normalized = teams.astype("string").str.strip().str.upper()
     mappings = needed_team_mappings(normalized.dropna())
     return normalized.replace(mappings)
+
+
+# NFL divisional alignment, unchanged since the 2002 expansion. Derived team
+# metadata rather than per-game data, so it lives here beside the team codes.
+DIVISIONS: dict[str, tuple[str, ...]] = {
+    "AFC East": ("BUF", "MIA", "NE", "NYJ"),
+    "AFC North": ("BAL", "CIN", "CLE", "PIT"),
+    "AFC South": ("HOU", "IND", "JAX", "TEN"),
+    "AFC West": ("DEN", "KC", "LAC", "LV"),
+    "NFC East": ("DAL", "NYG", "PHI", "WAS"),
+    "NFC North": ("CHI", "DET", "GB", "MIN"),
+    "NFC South": ("ATL", "CAR", "NO", "TB"),
+    "NFC West": ("ARI", "LAR", "SEA", "SF"),
+}
+
+TEAM_DIVISION: dict[str, str] = {
+    team: division for division, teams in DIVISIONS.items() for team in teams
+}
+
+
+def team_divisions(teams: pd.Series) -> pd.Series:
+    """Map canonical team abbreviations to their division name."""
+    return normalize_team_names(teams).map(TEAM_DIVISION).astype("string")

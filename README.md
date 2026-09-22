@@ -417,6 +417,87 @@ explained:
 
 `cover_rate_last_5` has 6 more, from teams whose only prior games were pushes.
 
+## Matchup records and the model table
+
+Phase 9 gives one row per team per game. A model needs one row per *game*:
+
+```python
+from gridiron.features import build_model_table
+
+rows = build_model_table(features, schedule)
+```
+
+`scripts/matchup_report.py` writes `model_table.csv`, `matchups_wide.csv`, and
+four missing-value breakdowns to `outputs/reports/`.
+
+### The merge
+
+The schedule is the spine. The home side joins on
+`(season, week, game_id, home_team)` and the away side on
+`(season, week, game_id, away_team)`, both `validate="one_to_one"` so a
+duplicated team-game raises instead of silently fanning the join out. Matching
+on the team code means a row can only be built when the side being attached is
+the side the schedule says it is — a transposition cannot pass silently.
+
+Each side's columns are prefixed (`home_off_epa_last_5`, `away_off_epa_last_5`),
+and **every differential is home minus away**, without exception.
+
+### The model row
+
+| Group | Columns |
+| --- | --- |
+| Identifiers | `game_id`, `season`, `week`, `gameday`, `home_team`, `away_team` |
+| Features | `spread_line`, `off_epa_diff_last_5`, `def_epa_strength_diff_last_5`, `pace_diff_last_5`, `rest_diff`, `point_margin_diff_last_5`, `win_pct_diff_last_5`, `home_short_week`, `away_short_week`, `div_game`, `week_1_flag` |
+| Targets | `home_cover`, `is_push` |
+
+`div_game` is derived from the two teams' divisions rather than read from the
+source column, because `clean_schedule` does not carry that column through. The
+derivation was checked against the source for all 2,911 regular-season games and
+agrees on every one, at 96 division games per season.
+
+`week_1_flag` is set when **either** team is playing its season opener. That is
+the condition under which a matchup has a side with no current-season history,
+which is what the flag exists to warn about.
+
+### No postgame field in the feature matrix
+
+`assert_no_postgame_fields` enforces the separation rather than trusting it.
+Scores, margins, realised EPA, and the targets themselves are all named in
+`POSTGAME_COLUMNS` and rejected if offered as features.
+
+Matching is by **exact name, never by substring**: `point_margin_diff_last_5` is
+a pregame rolling feature and must not be caught by a rule aimed at
+`point_margin`. A test asserts the guard catches an injected `home_score`, so it
+cannot pass vacuously.
+
+### Missing-value report
+
+`missing_value_report` returns four frames — by feature, season, week, and team.
+Nothing is dropped; the report exists so early-season sparsity is visible to
+whoever decides what to do about it.
+
+Over 2016-2026 (2,911 games), 433 rows are missing rolling differentials, and
+every one is accounted for:
+
+- **175** week 1 games, which have no prior game by construction,
+- **256** non-week-1 games in 2026, which has no played games in this snapshot,
+- **2** the 2017 Miami and Tampa Bay week 2 openers.
+
+Excluding 2026, week 2 is 1.25% missing and **week 3 onward is 0%**. The 211
+missing `spread_line` values are all 2026 fixtures whose lines are not yet
+posted.
+
+Of 2,639 completed games, 2,574 carry a label. The 65 that do not are all
+pushes — no completed game with a line is unlabelled for any other reason.
+
+### A note on the 2026 season
+
+2026 rows exist with their schedule-derived features populated (`rest_diff`,
+`div_game`, `week_1_flag`, both `short_week` flags at 100%) and no target, as
+intended. Their **rolling** differentials are null, because the play-by-play in
+this snapshot ends with 2025 and no 2026 game has been played into it. Once
+2026 play-by-play is downloaded, those fill in week by week with no code change.
+
 ## Layout
 
 ```text

@@ -1,0 +1,152 @@
+@import "tailwindcss";
+
+/*
+ * The design system.
+ *
+ * Broadcast-sports styling, deliberately not a copy of any network's branding:
+ * no borrowed logos, wordmarks or typefaces. Team colours are the teams' own
+ * and are used only as thin accents, never as fills behind text.
+ *
+ * Two rules the palette has to respect, because the data is the point:
+ *
+ *   Covered green and no-cover red are never the only signal. Every place they
+ *   appear carries a word or a glyph beside them, so a red/green colourblind
+ *   reader loses decoration rather than meaning.
+ *
+ *   The accent red is for state -- live, upcoming, selected -- and the gold is
+ *   for the high-confidence tier. Neither is ever used to mean "good result",
+ *   which would collide with the covered/no-cover pair.
+ */
+
+@theme {
+  /* Surfaces, darkest first. Charcoal is the page, navy the raised cards. */
+  --color-pitch-950: #0a0c10;
+  --color-pitch-900: #13151a;
+  --color-pitch-850: #161922;
+  --color-navy-900: #0d1b2a;
+  --color-navy-800: #122334;
+  --color-navy-700: #172d42;
+  --color-line-800: #222733;
+  --color-line-700: #2c3342;
+  --color-line-600: #3a4356;
+
+  /* Ink. Chalk is for numbers and headlines; fog and slate step down. */
+  --color-chalk: #f4f7fb;
+  --color-fog: #aeb8c7;
+  --color-slate-ink: #76829a;
+
+  /* State. Red is live/upcoming/selected; gold is the top confidence tier. */
+  --color-accent-600: #e4002b;
+  --color-accent-500: #ff1b45;
+  --color-accent-300: #ff7d96;
+  --color-gold-500: #f5b301;
+  --color-gold-300: #ffd25e;
+
+  /* Outcome. Always paired with a label or glyph, never colour alone. */
+  --color-covered-500: #1f9e58;
+  --color-covered-300: #52c98a;
+  --color-nocover-500: #9e4a52;
+  --color-nocover-300: #c27f86;
+  --color-push-500: #6b7488;
+
+  /* Typography. Condensed for headlines and scores, Inter for everything
+     that has to be read rather than glanced at. */
+  --font-display: "Barlow Condensed", "Oswald", system-ui, sans-serif;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  --radius-card: 0.5rem;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-pitch-900 text-chalk font-sans antialiased;
+    /* A faint field-gradient, so the page is not a flat slab of charcoal. */
+    background-image: radial-gradient(
+      ellipse 120% 80% at 50% -10%,
+      var(--color-navy-900) 0%,
+      var(--color-pitch-900) 60%
+    );
+    background-attachment: fixed;
+  }
+
+  /* Numbers line up in columns. Non-negotiable for a stat table. */
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    @apply bg-accent-600 text-chalk;
+  }
+
+  /* Visible focus, on dark, without the default halo disappearing. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-gold-500;
+  }
+}
+
+@layer components {
+  /* The broadcast card: dark panel, thin border, no drop shadow. Depth comes
+     from the border and the surface step, the way an on-air graphic does. */
+  .bcard {
+    @apply rounded-card border border-line-800 bg-navy-900/70 backdrop-blur-[1px];
+  }
+
+  .bcard-header {
+    @apply flex items-baseline justify-between gap-3 border-b border-line-800 px-4 py-3;
+  }
+
+  .bcard-title {
+    @apply font-display text-lg font-semibold uppercase tracking-wide text-chalk;
+  }
+
+  /* A stat callout: the big number with a small label under it. */
+  .callout-value {
+    @apply font-display text-4xl font-bold leading-none tracking-tight tabular-nums;
+  }
+
+  .callout-label {
+    @apply mt-1 text-[0.7rem] font-medium uppercase tracking-[0.12em] text-slate-ink;
+  }
+
+  /* Table shell used by every stat table, so shading and rules stay identical. */
+  .stat-table {
+    @apply w-full border-collapse text-sm;
+  }
+
+  .stat-table thead th {
+    @apply border-b border-line-700 px-3 py-2 text-left text-[0.68rem] font-semibold
+           uppercase tracking-[0.1em] text-slate-ink;
+  }
+
+  .stat-table tbody td {
+    @apply border-b border-line-800/70 px-3 py-2 text-fog;
+  }
+
+  .stat-table tbody tr:nth-child(even) {
+    @apply bg-pitch-850/40;
+  }
+
+  .stat-table tbody tr:hover {
+    @apply bg-navy-800/60;
+  }
+}
+
+/* Recharts draws its own SVG; these keep it on the design system rather than
+   its defaults, which are tuned for light backgrounds. */
+.recharts-cartesian-grid line {
+  stroke: var(--color-line-800);
+}
+
+.recharts-text {
+  fill: var(--color-slate-ink);
+  font-size: 11px;
+}
+
+.recharts-tooltip-wrapper {
+  outline: none;
+}

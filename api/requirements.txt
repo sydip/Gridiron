@@ -1,0 +1,6 @@
+# Serving layer only. The pipeline's own dependencies are in the project-root
+# requirements.txt; this API reads files and does not import gridiron.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pandas>=2.2
+pyarrow>=16

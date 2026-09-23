@@ -1,6 +1,195 @@
 # Gridiron
 
-A reproducible Python project for NFL data analysis and modeling.
+An end-to-end applied analytics project: NFL against-the-spread prediction,
+from nflverse ingestion through leakage-safe time-series features, a
+walk-forward-validated logistic regression, and automated weekly inference, to
+reports built for two different audiences.
+
+**The headline result is that the model has no edge**, and the project reports
+it that way throughout. A pipeline that cannot tell you when it has found
+nothing is not one you can trust when it says it has found something. Every
+number below is read from a file the pipeline wrote, and every one of them can
+be regenerated with the commands in this README.
+
+```bash
+pip install -r requirements.txt
+python -m gridiron.cli all
+python -m gridiron.cli predict --season 2026 --week 1
+```
+
+## Architecture
+
+```text
+                    nflverse
+                       |
+                       v
+         nflreadpy ingestion .................. gridiron/data/download.py
+                       |                        cli download
+                       v
+         Raw Parquet datasets ................. data/raw/*.parquet
+                       |
+                       v
+    pandas cleaning and aggregation ........... gridiron/data/clean.py
+                       |                        gridiron/features/{epa,pace}.py
+                       v
+  Leakage-safe rolling team features .......... gridiron/features/rolling.py
+                       |                        sort -> shift(1) -> roll
+                       v
+      Matchup differential dataset ............ gridiron/features/matchup.py
+                       |                        cli build-features
+                       v
+   scikit-learn logistic regression ........... gridiron/modeling/pipeline.py
+                       |                        impute -> scale -> classify
+                       v
+        Walk-forward validation ............... gridiron/modeling/evaluate.py
+                       |                        cli train, cli backtest
+                       v
+       Weekly ATS probabilities ............... gridiron/prediction/weekly.py
+                       |                        cli predict
+                       v
+    Seaborn reports and heatmaps .............. gridiron/eda/reports.py
+                                                cli report
+```
+
+Two properties are enforced rather than assumed. Every rolling feature is built
+by sorting, shifting one game, then rolling — so a team's row for week *n* uses
+only games completed before it. And every transform lives inside the
+scikit-learn `Pipeline`, so the imputer and scaler are refitted per fold and
+cannot leak a validation season's statistics into training.
+
+## Results
+
+All figures are out-of-sample unless stated, from expanding-window walk-forward
+validation: seven folds, each training on every prior season and predicting one
+unseen season.
+
+### Dataset
+
+| | |
+| --- | --- |
+| Seasons ingested | 2016–2025, plus the 2026 schedule |
+| Regular-season games, 2016–2025 | 2,639 |
+| Games after excluding pushes | 2,574 |
+| Pushes excluded (no right answer to learn) | 65 |
+| Rows needing at least one imputed feature | 158 of 2,574 |
+| 2026 games in the prediction table | 272 |
+| Features | 11 |
+
+### Out-of-sample performance, 1,828 games (2019–2025)
+
+| Metric | Value | Reference |
+| --- | --- | --- |
+| ATS record | 925–903 | — |
+| Accuracy | **50.60%** | 52.38% to break even at −110 |
+| Mean season accuracy | 50.64% | — |
+| Best validation season | **54.07%** (2019) | — |
+| Worst validation season | **47.39%** (2024) | — |
+| Season-to-season std | 1.96pp | — |
+| ROC-AUC | **0.4817** | 0.5 is a coin flip |
+| Log loss | **0.69637** | 0.69315 for predicting 0.5 every time |
+| Brier score | **0.25159** | 0.25000 for predicting 0.5 every time |
+| Balanced accuracy | 50.16% | — |
+| Precision / recall / F1 | 0.4899 / 0.3266 / 0.3919 | — |
+| ROI at −110 | **−3.40%** | 0% to break even |
+
+Accuracy above 50% while ROC-AUC sits below it is not a contradiction: the
+model calls slightly more than half of games correctly, but its probabilities
+do not rank games — a game it is surer about is not more likely to be right.
+Log loss and Brier score are both *worse* than a flat 0.5 forecast, which is
+the same statement in a second form.
+
+### Recommended bets and ROI
+
+Seven confidence thresholds, fixed in advance, staked flat at −110. Pushes are
+staked and refunded, so they count as bets but as neither wins nor losses.
+
+| Policy | Bets | Win rate | ROI | Max drawdown |
+| --- | --- | --- | --- | --- |
+| Bet every prediction | 1,871 | 50.60% | −3.40% | 83.6u |
+| Edge ≥ 2.0pp | 938 | 48.15% | −8.07% | 83.5u |
+| Edge ≥ 3.0pp | 600 | 47.12% | −10.05% | 67.7u |
+| Edge ≥ 4.0pp | 345 | 45.13% | −13.84% | 54.0u |
+| Edge ≥ 5.0pp | 188 | 45.36% | −13.41% | 29.9u |
+| Edge ≥ 7.5pp | 38 | 51.35% | −1.97% | 6.6u |
+| Edge ≥ 10.0pp | 8 | 50.00% | −4.55% | 2.2u |
+
+**No policy with a sample large enough to interpret is profitable.** The two
+least-negative rows are the two smallest: 38 bets and 8 bets, both below the
+100 needed for a win rate to carry information, and both flagged as such in the
+output. Win rate also *falls* as claimed confidence rises — 53.1% in the
+lowest-confidence bucket against 43.8% at 5–7.5pp — which is the opposite of
+what a working confidence signal does.
+
+### Versus baselines, on exactly the same 1,828 games
+
+| Strategy | Accuracy | ROI |
+| --- | --- | --- |
+| Coin flip | 52.41% | +0.05% |
+| Always the underdog | 51.81% | −1.10% |
+| Always the away team | 51.26% | −2.14% |
+| **The model** | **50.60%** | **−3.40%** |
+| Back the better recent offence | 50.05% | −4.44% |
+| Always the home team | 48.74% | −6.95% |
+| Always the favourite | 48.19% | −7.99% |
+
+The model places fourth of seven, behind three strategies that need no model at
+all. The coin flip finishing narrowly above break-even on this sample is itself
+the lesson: at 1,828 games, a half-point of ROI is noise, and it is exactly the
+kind of result that gets mistaken for a system.
+
+### Reports
+
+The historical report covers seasons the model never saw. Every panel is a
+settled result.
+
+![Historical performance report](docs/images/historical_report.png)
+
+The weekly report is drawn in a different accent colour, states the game count
+and the no-edge caveat in its subtitle, and shows the model's own arithmetic
+for each pick.
+
+![Weekly prediction report](docs/images/weekly_report.png)
+
+## What this project demonstrates
+
+| | |
+| --- | --- |
+| **Time-series feature engineering** | Rolling and season-to-date windows that reset per team-season, with shift-then-roll ordering |
+| **Sports-data ingestion** | nflverse play-by-play, schedules and team stats via nflreadpy, cached as Parquet with a manifest |
+| **Data validation** | Contract tests on columns, IDs, team codes, dates and numerics, each error naming what broke |
+| **Leakage prevention** | Chronological splits, shift-before-roll, all transforms inside the `Pipeline`, and tests that assert it |
+| **Interpretable classification** | Coefficients and odds ratios on a standardised scale, with VIF and cross-fold sign stability |
+| **Probability calibration** | Reliability diagrams, a temporally valid Platt/isotonic trial, and a documented decision to decline |
+| **Backtesting** | Expanding-window walk-forward, flat staking at −110, drawdown and Wilson intervals |
+| **Reproducible ML pipelines** | Seeded, config-driven, idempotent commands that record their own run metadata |
+| **Automated weekly inference** | One command rebuilds features from source and writes the week's predictions and report |
+| **Analytical visualisation** | Seaborn reports for two audiences, on a colourblind-checked palette |
+
+A fair amount of that work went into establishing a negative result rigorously
+enough to trust: the LA/LAR join fault that silently dropped 181 team-games,
+the spread-sign convention that the specification had backwards, the
+regularisation that shrank every coefficient toward zero, and the confidence
+tiers that do not predict anything.
+
+## Limitations
+
+- **The model has no demonstrated edge.** ROC-AUC 0.4817, log loss and Brier
+  worse than a flat 0.5, ROI −3.40%, no profitable policy on a credible sample.
+- **Backtested results are not a forecast.** Every figure above describes games
+  that have already been played. Nothing here is evidence about future games,
+  and none of it is betting advice.
+- **The lines are not live quotes.** nflverse publishes one spread per game with
+  no timestamp of its own. Real closing lines move, and a real bettor pays a
+  spread and a vig this backtest only approximates.
+- **Coefficients are associations, not causes.** The data is observational; no
+  feature was manipulated.
+- **Six of eleven coefficients change sign across folds**, and
+  `point_margin_diff_last_5` has a VIF of 10.1, so individual effects are not
+  separable.
+- **Costs are idealised.** Flat unit staking at a constant −110, no limits, no
+  line shopping, no bankroll constraint.
+- **2026 is unplayed.** Its rows carry features and predictions but no labels,
+  and are excluded from every metric above.
 
 ## Setup
 
@@ -1081,9 +1270,9 @@ outcomes justify.
 Systematic bias is the phase brief's trigger for adding `CalibratedClassifierCV`.
 It was not added, for reasons that were measured rather than assumed:
 
-- **AUC is 0.4805**, against a chance threshold of 0.5270 at this sample size.
+- **AUC is 0.4817**, against a chance threshold of 0.5270 at this sample size.
   The scores do not rank games — they rank them slightly *worse* than random.
-- **The calibration slope is −0.54.** Higher predicted probability goes with a
+- **The calibration slope is −0.53.** Higher predicted probability goes with a
   *lower* observed rate.
 
 The distinction that decides it is between **calibration** and
@@ -1097,9 +1286,9 @@ alone — disjoint, both entirely before the validation season:
 
 | Probabilities | Log loss | Brier |
 | --- | --- | --- |
-| raw | 0.69611 | 0.25147 |
+| raw | 0.69592 | 0.25137 |
 | platt (temporal) | 0.69383 | 0.25033 |
-| isotonic (temporal) | 0.75977 | 0.25484 |
+| isotonic (temporal) | 0.75971 | 0.25481 |
 | **constant base rate** | **0.69283** | **0.24984** |
 
 Platt "improves" log loss to 0.69383 — which is the base-rate figure to three
@@ -1645,8 +1834,8 @@ pytest tests/test_leakage.py        # one area
 pytest -k "spread and convention"   # one idea
 ```
 
-707 tests across 27 files. They run in about a minute and a half, and need no
-network, no credentials, and no downloaded data.
+737 tests across 28 files. They need no network, no credentials, and no
+downloaded data.
 
 ### What is covered
 
@@ -1661,6 +1850,7 @@ network, no credentials, and no downloaded data.
 | The command-line workflow — validation, warnings, staleness, run records | `test_workflow.py`, `test_cli.py` |
 | End to end — the commands run for real on synthetic data | `test_predict_week_command.py`, `test_build_features_command.py` |
 | Reproducibility and conformance to the written specification | `test_config.py`, `test_spec_conformance.py` |
+| Documentation — every metric in the Results section, re-derived from its artifact | `test_readme_metrics.py` |
 
 ### Fixtures are small, fixed, and hand-checked
 
@@ -1697,18 +1887,20 @@ covered by `test_walk_forward.py` and `test_policies.py`.
 
 ### Skips on a clean clone are expected
 
-On a fresh checkout with no downloaded data, the suite reports **680 passed, 27
-skipped, 0 failed**. The 27 are the tests that check properties of the real
-2016–2026 data — the LA/LAR join, the observed missingness rates, the spread
-convention against 2,574 settled games — and they skip with a stated reason
-rather than fail:
+On a fresh checkout with no downloaded data, the suite reports **690 passed, 47
+skipped, 0 failed**. The skips are the tests that need artifacts a fresh clone
+does not have: 27 that check properties of the real 2016–2026 data — the
+LA/LAR join, the observed missingness rates, the spread convention against
+2,574 settled games — and 20 that check the README's results table against the
+CSVs the pipeline wrote. All of them skip with a stated reason rather than
+fail:
 
 ```text
 SKIPPED [4] tests/test_epa.py: raw play-by-play parquet is not available
 SKIPPED [8] tests/test_matchup_merge.py: raw parquet data is not available
 ```
 
-Run `python -m gridiron.cli download` and all 707 run.
+Run `python -m gridiron.cli all` and all 737 run.
 
 ## Layout
 

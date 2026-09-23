@@ -589,6 +589,12 @@ def _matchup_label(row) -> str:
     return f"{row.away_team} at {row.home_team}"
 
 
+# The picks panel is split between bars and a column of labels. The bars get
+# this share of the width; the labels start just past it.
+BAR_SHARE_OF_PANEL = 0.62
+ANNOTATION_COLUMN = 0.66
+
+
 def _picks_panel(axis: plt.Axes, priced: pd.DataFrame) -> None:
     """Each game's home-cover chance, with the pick and the line beside it."""
     frame = priced.copy()
@@ -612,17 +618,27 @@ def _picks_panel(axis: plt.Axes, priced: pd.DataFrame) -> None:
     axis.set_title("Chance the home team covers", loc="left")
     axis.set_xlabel("Home-team cover probability")
     axis.set_ylabel("")
-    axis.set_xlim(0.35, 0.65)
+
+    # The right of the panel is a reserved column for the per-game labels, so
+    # the upper limit is set from the longest bar rather than fixed: with a
+    # fixed limit, a confident week draws bars straight through its own text.
+    lower = 0.35
+    longest = float(frame["home_cover_probability"].max())
+    upper = max(0.65, lower + (longest - lower) / BAR_SHARE_OF_PANEL)
+    axis.set_xlim(lower, upper)
     axis.xaxis.set_major_formatter(lambda value, _: as_percent(value, 0))
     # Labelled in place rather than through a legend: a legend box lands on the
     # annotation column to the right of the bars.
+    # Anchored in axes fraction vertically: at a data y above the top bar this
+    # falls outside the limits and is clipped away silently.
     axis.annotate(
         "even (50%)",
-        (0.5, -0.6),
+        (0.5, 0.99),
+        xycoords=("data", "axes fraction"),
         xytext=(4, 0),
         textcoords="offset points",
         ha="left",
-        va="center",
+        va="top",
         fontsize=8.5,
         color=TEXT_SECONDARY,
     )
@@ -631,7 +647,7 @@ def _picks_panel(axis: plt.Axes, priced: pd.DataFrame) -> None:
         axis.annotate(
             f"line {row.spread_line_used:+.1f}   pick {row.predicted_side}"
             f"   {as_percent(row.confidence, 1)} over even",
-            (0.652, index),
+            (ANNOTATION_COLUMN, index),
             xycoords=("axes fraction", "data"),
             va="center",
             fontsize=8.5,
@@ -696,11 +712,15 @@ def _confidence_spread_panel(axis: plt.Axes, priced: pd.DataFrame) -> None:
     axis.set_title("How confident the model is this week", loc="left")
     axis.set_xlabel("Percentage points above an even call")
     axis.set_ylabel("Games")
+    # Below the axes, not inside them: a two-line caption in the plot area
+    # lands on the bars whenever the week's confidences are spread out.
     axis.annotate(
         "In backtesting, being surer did not mean being righter.\n"
         "Treat these as the model's own certainty, not evidence.",
-        (0.02, 0.86),
+        (0.0, -0.17),
         xycoords="axes fraction",
+        ha="left",
+        va="top",
         fontsize=8.5,
         color=TEXT_MUTED,
     )
